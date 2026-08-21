@@ -57,3 +57,7 @@ config/config.json
 # ZIPs grandes
 *.zip
 NutriAssistent-*.zip
+
+# Credenciais (NAO COMMITAR)
+config/.env
+config/config.json
