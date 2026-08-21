@@ -1,0 +1,259 @@
+{
+  "title": "Editar Nutricional 1",
+  "description": "Código interno 1 Faça os ajustes necessários no nutricional",
+  "fieldCount": 19,
+  "fields": [
+    {
+      "labelText": "Descrição do Nutricional",
+      "inputName": "descricaoProduto",
+      "inputType": "text",
+      "inputId": "",
+      "value": "ACAI EM PO",
+      "placeholder": "",
+      "required": false
+    },
+    {
+      "labelText": "Quantidade porção",
+      "inputName": "quantidadePorcao",
+      "inputType": "text",
+      "inputId": "",
+      "value": "100",
+      "placeholder": "",
+      "required": false
+    },
+    {
+      "labelText": "Unidade porção",
+      "inputName": "unidadePorcao429",
+      "inputType": "select-one",
+      "inputId": "",
+      "value": "0",
+      "placeholder": "",
+      "required": false,
+      "options": [
+        {
+          "value": "0",
+          "text": "g",
+          "selected": true
+        },
+        {
+          "value": "1",
+          "text": "ml",
+          "selected": false
+        }
+      ]
+    },
+    {
+      "labelText": "Parte inteira medida caseira",
+      "inputName": "parteInteiraMedidaCaseira429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "1",
+      "placeholder": "",
+      "required": false
+    },
+    {
+      "labelText": "Alto em açúcar?",
+      "inputName": "",
+      "inputType": "checkbox",
+      "inputId": "",
+      "value": "on",
+      "placeholder": "",
+      "required": false,
+      "checked": false
+    },
+    {
+      "labelText": "Alto em gorduras?",
+      "inputName": "",
+      "inputType": "checkbox",
+      "inputId": "",
+      "value": "on",
+      "placeholder": "",
+      "required": false,
+      "checked": false
+    },
+    {
+      "labelText": "Alto em sódio?",
+      "inputName": "",
+      "inputType": "checkbox",
+      "inputId": "",
+      "value": "on",
+      "placeholder": "",
+      "required": false,
+      "checked": false
+    },
+    {
+      "labelText": "Valor energético",
+      "inputName": "valorEnergetico429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "288",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Carboidratos",
+      "inputName": "carboidratos429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "69,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Açúcares totais",
+      "inputName": "acucaresTotais429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Açúcares adicionados",
+      "inputName": "acucaresAdicionados",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Lactose",
+      "inputName": "lactose",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Galactose",
+      "inputName": "galactose",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Proteínas",
+      "inputName": "proteinas429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Gorduras totais",
+      "inputName": "gordurasTotais429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Gorduras saturadas",
+      "inputName": "gordurasSaturadas429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Gorduras trans",
+      "inputName": "gordurasTrans429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Fibra alimentar (g)",
+      "inputName": "fibraAlimentar429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "9,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    },
+    {
+      "labelText": "Sódio (mg)",
+      "inputName": "sodio429",
+      "inputType": "text",
+      "inputId": "",
+      "value": "0,0",
+      "placeholder": "Digite o valor",
+      "required": false
+    }
+  ],
+  "unassociatedInputs": [
+    {
+      "name": "parteDecimalMedidaCaseira429",
+      "type": "select-one",
+      "value": "0",
+      "placeholder": ""
+    },
+    {
+      "name": "medidaCaseiraUtilizada",
+      "type": "select-one",
+      "value": "00",
+      "placeholder": ""
+    }
+  ],
+  "buttons": [
+    {
+      "text": "",
+      "type": "submit",
+      "ariaLabel": "",
+      "dataSlot": "tooltip-trigger"
+    },
+    {
+      "text": "",
+      "type": "button",
+      "ariaLabel": "",
+      "dataSlot": "checkbox"
+    },
+    {
+      "text": "",
+      "type": "button",
+      "ariaLabel": "",
+      "dataSlot": "checkbox"
+    },
+    {
+      "text": "",
+      "type": "button",
+      "ariaLabel": "",
+      "dataSlot": "checkbox"
+    },
+    {
+      "text": "Campos Obrigatórios",
+      "type": "button",
+      "ariaLabel": "",
+      "dataSlot": "tabs-trigger"
+    },
+    {
+      "text": "Campos Extras",
+      "type": "button",
+      "ariaLabel": "",
+      "dataSlot": "tabs-trigger"
+    },
+    {
+      "text": "Close",
+      "type": "button",
+      "ariaLabel": "",
+      "dataSlot": "dialog-close"
+    },
+    {
+      "text": "",
+      "type": "submit",
+      "ariaLabel": "",
+      "dataSlot": "button"
+    }
+  ],
+  "fullTextLength": 1233,
+  "fullText": "Editar Nutricional 1Código interno 1 Faça os ajustes necessários no nutricionalDescrição do NutricionalQuantidade porçãoValores devem estar entre 0 a 999Unidade porçãogmlParte inteira medida caseiraValores devem estar entre 0 a 999Parte fracionada1/41/31/22/33/4Colher(es) de SopaColher(es) de CaféColher(es) de CháXícara(s)De Xícara(s)Unidade(s)Pacote(s)Fatia(s)Fatia(s) Fina(s)Pedaço(s)Folha(s)Pão(es)Biscoito(s)Bisnaguinha(s)Disco(s)Copo(s)Porção(ões)Tablete(s)Sache(s)Almôndega(s)Bife(s)Filé(s)Concha(s)Bala(s)Prato(s) Fundo(s)Pitada(s)Lata(s)Xícara de CháPrato rasoAlto em açúcar?Alto em gorduras?Alto em sódio?Campos ObrigatóriosCampos ExtrasValor energéticoValores devem estar entre 0 a 5100CarboidratosValores devem estar entre 0,0 a 765Açúcares totaisValores devem estar entre 0,0 a 99Açúcares adicionadosValores devem estar entre 0,0 a 99LactoseValores devem estar entre 0,0 a 9999GalactoseValores devem estar entre 0,0 a 9999ProteínasValores devem estar entre 0,0 a 99Gorduras totaisValores devem estar entre 0,0 a 99Gorduras saturadasValores devem estar entre 0,0 a 51Gorduras transValores devem estar entre 0,0 a 5,1Fibra alimentar (g)Valores devem estar entre 0,0 a 63Sódio (mg)Valores devem estar entre 0,0 a 5100Close"
+}

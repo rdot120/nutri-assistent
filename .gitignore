@@ -1,0 +1,55 @@
+﻿# Arquivos temporarios
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Ambiente virtual
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Dados locais (NAO sincronizar entre PCs)
+data/session.json
+data/nutri_auto.db
+data/usda_cache.db
+data/tbca_cache.db
+
+# Builds (cada PC gera o seu)
+dist/
+build/
+*.spec
+
+# Config local (cada PC tem suas credenciais)
+config/config.json
