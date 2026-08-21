@@ -58,10 +58,15 @@ def main():
     print("  Pressione Ctrl+C para parar")
     print()
     
+    # Sincronizar imediatamente ao iniciar
+    print("  Sincronizacao inicial...")
+    sync()
+    print()
+    
     while True:
         try:
-            sync()
             time.sleep(SYNC_INTERVAL)
+            sync()
         except KeyboardInterrupt:
             print("\n  Sincronizacao parada.")
             break
