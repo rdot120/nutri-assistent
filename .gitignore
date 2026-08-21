@@ -53,3 +53,7 @@ build/
 
 # Config local (cada PC tem suas credenciais)
 config/config.json
+
+# ZIPs grandes
+*.zip
+NutriAssistent-*.zip
