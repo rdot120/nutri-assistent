@@ -282,9 +282,10 @@ class App(ctk.CTk):
 
     def connect_platform(self):
         """Conecta na plataforma."""
-        if self._connected:
+        if self._connected or getattr(self, "_connecting", False):
             return
 
+        self._connecting = True
         self._log("Conectando na plataforma...")
         self._set_status("Conectando...")
 
@@ -299,6 +300,8 @@ class App(ctk.CTk):
             except Exception as e:
                 self._connected = False
                 self.after(0, lambda: self._on_error(f"Erro ao conectar: {e}"))
+            finally:
+                self._connecting = False
 
         threading.Thread(target=_connect, daemon=True).start()
 
