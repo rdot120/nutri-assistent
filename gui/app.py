@@ -477,6 +477,22 @@ class App(ctk.CTk):
 
         return (match_name, source, confidence, status, fields_count)
 
+    def _count_filled(self, processed):
+        """Preenchidos: tinham dados na plataforma e ainda nao foram salvos."""
+        return sum(
+            1 for p in processed
+            if p.status == "filled"
+            or (p.status == "skipped" and p.skip_reason == "already_filled")
+        )
+
+    def _count_saved(self, processed):
+        """Salvos: equivalente ao botao verde (Associados) do site."""
+        return sum(
+            1 for p in processed
+            if p.status == "saved"
+            or (p.status == "skipped" and p.skip_reason == "prefilled_salvo")
+        )
+
     def _start_live_stream(self):
         """Prepara a tabela para receber itens em tempo real."""
         dashboard = self._pages["dashboard"]
@@ -508,7 +524,9 @@ class App(ctk.CTk):
                           if p.status == "skipped")
             dashboard.update_stats(
                 self._live_total or len(self._live_rows),
-                matched, 0, 0
+                matched,
+                self._count_filled(self._live_rows),
+                self._count_saved(self._live_rows),
             )
             dashboard.update_progress(idx, max(1, self._live_total))
             if skipped:
@@ -537,7 +555,9 @@ class App(ctk.CTk):
         matched = sum(1 for p in processed if p.status == "matched")
         skipped = sum(1 for p in processed if p.status == "skipped")
         removed = sum(1 for p in processed if p.status == "removed")
-        dashboard.update_stats(total, matched, 0, 0)
+        dashboard.update_stats(total, matched,
+                               self._count_filled(processed),
+                               self._count_saved(processed))
         dashboard.update_progress(0, matched)
         dashboard.update_sources(tbca=len(platform_foods))
 
@@ -1112,8 +1132,9 @@ class App(ctk.CTk):
         dashboard = self._pages["dashboard"]
         dashboard.update_progress(current, total)
         matched = sum(1 for p in self._processed if p.status == "matched")
+        saved = self._count_saved(self._processed)
         dashboard.update_stats(
-            len(self._processed), matched, filled, errors
+            len(self._processed), matched, filled, saved
         )
 
     def _load_saved_session(self):

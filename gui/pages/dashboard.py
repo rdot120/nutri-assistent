@@ -75,8 +75,9 @@ class DashboardPage(ctk.CTkFrame):
         self.card_filled = StatCard(cards, "Preenchidos", "0", COLORS["accent"])
         self.card_filled.grid(row=0, column=2, sticky="ew", padx=4)
 
-        self.card_errors = StatCard(cards, "Erros", "0", COLORS["error"])
-        self.card_errors.grid(row=0, column=3, sticky="ew", padx=(8, 0))
+        self.card_saved = StatCard(cards, "Salvos", "0",
+                                   COLORS["primary_light"])
+        self.card_saved.grid(row=0, column=3, sticky="ew", padx=(8, 0))
 
     def _build_progress(self):
         frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -369,12 +370,12 @@ class DashboardPage(ctk.CTkFrame):
         self._sources_label.configure(text=" | ".join(parts) if parts else "")
 
     def update_stats(self, total: int, matched: int,
-                     filled: int, errors: int):
+                     filled: int, saved: int):
         """Atualiza cards de estatistica."""
         self.card_total.set_value(str(total))
         self.card_matched.set_value(str(matched))
         self.card_filled.set_value(str(filled))
-        self.card_errors.set_value(str(errors))
+        self.card_saved.set_value(str(saved))
 
     def update_progress(self, current: int, total: int):
         """Atualiza barra de progresso."""
