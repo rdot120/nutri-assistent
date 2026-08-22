@@ -500,9 +500,18 @@ class Orchestrator:
 
             # Verificar se marcado como conferido
             if card_info.get("reviewed"):
+                # Arquivar valores conferidos pela nutricionista (1x por
+                # alimento) - viram prioridade maxima nas proximas cargas
+                self._capture_validated_values(pf.platform_name)
                 pf.status = "skipped"
                 pf.skip_reason = "reviewed"
-                pf.suggestion = "Marcado como conferido pela nutricionista"
+                archived = self.db.get_validated_value(pf.platform_name)
+                if archived:
+                    n = len(archived)
+                    pf.suggestion = (f"Conferido - {n} campos arquivados "
+                                     f"no banco")
+                else:
+                    pf.suggestion = "Marcado como conferido pela nutricionista"
                 logger.info(f"  SKIP (conferido): {pf.platform_name}")
                 continue
 

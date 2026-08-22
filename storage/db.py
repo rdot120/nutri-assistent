@@ -93,6 +93,15 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_manual_food
                     ON manual_entries(food_name);
+
+                CREATE TABLE IF NOT EXISTS validated_values (
+                    food_name TEXT PRIMARY KEY,
+                    data_json TEXT NOT NULL,
+                    fields_count INTEGER NOT NULL DEFAULT 0,
+                    captured_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_validated_food
+                    ON validated_values(food_name);
             """)
             logger.debug("Banco de dados inicializado")
 
@@ -370,5 +379,62 @@ class Database:
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM manual_entries"
+            ).fetchone()
+            return row[0]
+
+    # === Valores validados (capturados da plataforma) ===
+
+    def save_validated_value(self, food_name: str, data: dict):
+        """Arquiva valores conferidos pela nutricionista na plataforma."""
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO validated_values "
+                "(food_name, data_json, fields_count, captured_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(food_name) DO UPDATE SET "
+                "data_json = excluded.data_json, "
+                "fields_count = excluded.fields_count, "
+                "captured_at = excluded.captured_at",
+                (food_name, json.dumps(data, ensure_ascii=False),
+                 len(data), now)
+            )
+
+    def get_validated_value(self, food_name: str) -> Optional[dict]:
+        """Busca valores arquivados de um alimento."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT data_json FROM validated_values "
+                "WHERE food_name = ?",
+                (food_name,)
+            ).fetchone()
+            if row:
+                return json.loads(row["data_json"])
+        return None
+
+    def get_all_validated_entries(self) -> dict[str, dict]:
+        """Retorna todos os valores arquivados {nome: campos}."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT food_name, data_json FROM validated_values "
+                "ORDER BY food_name"
+            ).fetchall()
+            return {r["food_name"]: json.loads(r["data_json"])
+                    for r in rows}
+
+    def has_validated_value(self, food_name: str) -> bool:
+        """Verifica se ja existe arquivo para o alimento."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM validated_values WHERE food_name = ?",
+                (food_name,)
+            ).fetchone()
+            return row is not None
+
+    def get_validated_count(self) -> int:
+        """Retorno numero de alimentos com valores arquivados."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM validated_values"
             ).fetchone()
             return row[0]
