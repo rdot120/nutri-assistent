@@ -41,6 +41,8 @@ from .pages.import_data import ImportPage
 
 logger = logging.getLogger(__name__)
 
+APP_VERSION = "1.2"
+
 
 class App(ctk.CTk):
     """Janela principal: sidebar de navegacao + paginas."""
@@ -61,7 +63,7 @@ class App(ctk.CTk):
         super().__init__()
         configure_theme()
 
-        self.title("Nutri Assistent - Tecnosoft Balancas")
+        self.title(f"Nutri Assistent v{APP_VERSION} - Tecnosoft Balancas")
         self.geometry("1280x800")
         self.minsize(1000, 650)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -167,7 +169,7 @@ class App(ctk.CTk):
 
         # Status na sidebar
         self._sidebar_status = ctk.CTkLabel(
-            sidebar, text="v1.0",
+            sidebar, text=f"v{APP_VERSION}",
             font=FONTS["small"], text_color="#9AA888",
             anchor="w"
         )

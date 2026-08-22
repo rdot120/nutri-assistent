@@ -5,9 +5,14 @@
 - Identidade para commits: `Qualihouse <qualihouse@users.noreply.github.com>`
 
 ## Estrutura do projeto
-- `nutri-assistent\` → **v1** (branch `main`) — NÃO mexer ao trabalhar na v1.1
-- `nutri-assistent-v1.1\` → **v1.1** (branch `v1.1`) — versão em desenvolvimento (git worktree da mesma pasta .git)
+- `nutri-assistent\` → **v1** (branch `main`) — estável, NÃO mexer
+- `nutri-assistent-v1.1\` → **v1.1** (branch `v1.1`) — congelada como release
+- `nutri-assistent-v1.2\` → **v1.2** (branch `v1.2`) — versão em desenvolvimento (git worktree da mesma pasta .git)
 - `Documents\NutriAssistent-CodigoFonte\` → código-fonte original trazido de outro PC (referência; não é repositório Git)
+
+## Versão exibida no programa
+- Constante `APP_VERSION` em `gui\app.py` — aparece no título da janela e na barra lateral.
+- Ao mudar de versão, atualizar a constante e criar branch/worktree novos seguindo o padrão acima.
 
 ## Sincronização automática
 - Ambas as pastas rodam `auto_sync.py` em background (`pythonw`), commitando e enviando a cada 5 minutos.
