@@ -344,6 +344,13 @@ class App(ctk.CTk):
                     f"{info['marked']} marcados como preenchidos"
                 ))
 
+                # Preparar exibicao em tempo real
+                self._live_platform_foods = platform_foods
+                self._live_manual_entries = self.db.get_all_manual_entries()
+                self._live_rows = []
+                self._live_total = len(platform_foods)
+                self.after(0, self._start_live_stream)
+
                 # Sincronizar com sessao anterior
                 saved = self.session_mgr.load()
                 if saved and saved.get("processed_raw"):
@@ -372,7 +379,8 @@ class App(ctk.CTk):
                     self.after(0, lambda: self._log("Fase 3: Buscando correspondencias..."))
                     processed = self.orchestrator.step3_match_foods(
                         platform_foods,
-                        gui_callback=lambda msg: self.after(0, lambda m=msg: self._log(m))
+                        gui_callback=lambda msg: self.after(0, lambda m=msg: self._log(m)),
+                        on_item=self._live_on_item,
                     )
 
                     matched = sum(1 for p in processed if p.status == "matched")
@@ -407,6 +415,113 @@ class App(ctk.CTk):
 
         threading.Thread(target=_load, daemon=True).start()
 
+    def _compute_row_fields(self, pf, manual_entries):
+        """Calcula os campos de exibicao de um item para a tabela."""
+        match_name = ""
+        source = ""
+        confidence = 0
+        status = "Pendente"
+        fields_count = 0
+
+        if pf.status == "removed":
+            match_name = pf.suggestion[:35] if pf.suggestion else ""
+            source = "Removido"
+            status = "Removido"
+        elif pf.status == "review_needed":
+            match_name = pf.match.tbca_name[:35] if pf.match else ""
+            source = "Revisar"
+            status = "Revisar"
+            confidence = pf.match.confidence if pf.match else 0
+        elif pf.status == "skipped":
+            if pf.skip_reason == "already_filled":
+                match_name = pf.suggestion[:35] if pf.suggestion else ""
+                source = "Plataforma"
+                status = "Preenchido"
+            elif pf.skip_reason == "reviewed":
+                match_name = pf.suggestion[:35] if pf.suggestion else ""
+                source = "Plataforma"
+                status = "Conferido"
+            elif pf.skip_reason == "prefilled_salvo":
+                match_name = "(salvo na plataforma)"
+                source = "Plataforma"
+                status = "Salvo"
+            elif pf.skip_reason == "prefilled_conferido":
+                match_name = "(conferido na plataforma)"
+                source = "Plataforma"
+                status = "Conferido"
+            else:
+                match_name = pf.suggestion[:35] if pf.suggestion else ""
+                source = "Ignorado"
+                status = "Ignorado"
+        elif pf.match:
+            match_name = pf.match.tbca_name[:35]
+            confidence = pf.match.confidence
+            method = pf.match.match_method or ""
+            if method.startswith("ai_"):
+                source = f"IA ({method.replace('ai_', '')})"
+            elif method == "usda":
+                source = "USDA"
+            else:
+                source = "TBCA"
+            status = "Com Match"
+            fields_count = len(pf.fields_to_fill) if pf.fields_to_fill else 0
+        elif pf.platform_name in manual_entries:
+            match_name = "Manual"
+            source = "Manual"
+            status = "Entrada Manual"
+            fields_count = len(manual_entries[pf.platform_name])
+        else:
+            status = "Sem Match"
+
+        return (match_name, source, confidence, status, fields_count)
+
+    def _start_live_stream(self):
+        """Prepara a tabela para receber itens em tempo real."""
+        dashboard = self._pages["dashboard"]
+
+        def reset():
+            dashboard.clear_table()
+            self._live_rows = []
+            self._live_total = len(self._live_platform_foods)
+            dashboard.update_progress(0, max(1, self._live_total))
+
+        self.after(0, reset)
+
+    def _live_on_item(self, pf):
+        """Callback do orquestrador: adiciona item na tabela em tempo real."""
+
+        def apply():
+            if not hasattr(self, "_live_rows"):
+                return
+            dashboard = self._pages["dashboard"]
+            self._live_rows.append(pf)
+            idx = len(self._live_rows)
+            fields = self._compute_row_fields(pf, self._live_manual_entries)
+            dashboard.add_food_row(
+                idx, pf.platform_name[:30], *fields
+            )
+            matched = sum(1 for p in self._live_rows
+                          if p.status == "matched")
+            skipped = sum(1 for p in self._live_rows
+                          if p.status == "skipped")
+            dashboard.update_stats(
+                self._live_total or len(self._live_rows),
+                matched, 0, 0
+            )
+            dashboard.update_progress(idx, max(1, self._live_total))
+            if skipped:
+                self._set_status(
+                    f"Carregando... {idx}/{self._live_total} "
+                    f"({matched} com match, {skipped} pre-preenchidos)"
+                )
+            else:
+                self._set_status(
+                    f"Carregando... {idx}/{self._live_total} "
+                    f"({matched} com match)"
+                )
+
+        self.after(0, apply)
+
     def _update_dashboard_data(self, platform_foods, processed):
         """Atualiza dashboard com dados carregados."""
         dashboard = self._pages["dashboard"]
@@ -432,63 +547,9 @@ class App(ctk.CTk):
 
         # Preencher tabela
         for i, pf in enumerate(processed):
-            match_name = ""
-            source = ""
-            confidence = 0
-            status = "Pendente"
-            fields_count = 0
-
-            if pf.status == "removed":
-                match_name = pf.suggestion[:35] if pf.suggestion else ""
-                source = "Removido"
-                status = "Removido"
-                confidence = 0
-            elif pf.status == "review_needed":
-                match_name = pf.match.tbca_name[:35] if pf.match else ""
-                source = "Revisar"
-                status = "Revisar"
-                confidence = pf.match.confidence if pf.match else 0
-            elif pf.status == "skipped":
-                if pf.skip_reason == "already_filled":
-                    match_name = pf.suggestion[:35] if pf.suggestion else ""
-                    source = "Plataforma"
-                    status = "Preenchido"
-                elif pf.skip_reason == "reviewed":
-                    match_name = pf.suggestion[:35] if pf.suggestion else ""
-                    source = "Plataforma"
-                    status = "Conferido"
-                elif pf.skip_reason == "prefilled_salvo":
-                    match_name = "(salvo na plataforma)"
-                    source = "Plataforma"
-                    status = "Salvo"
-                elif pf.skip_reason == "prefilled_conferido":
-                    match_name = "(conferido na plataforma)"
-                    source = "Plataforma"
-                    status = "Conferido"
-                else:
-                    match_name = pf.suggestion[:35] if pf.suggestion else ""
-                    source = "Ignorado"
-                    status = "Ignorado"
-                confidence = 0
-            elif pf.match:
-                match_name = pf.match.tbca_name[:35]
-                confidence = pf.match.confidence
-                method = pf.match.match_method or ""
-                if method.startswith("ai_"):
-                    source = f"IA ({method.replace('ai_', '')})"
-                elif method == "usda":
-                    source = "USDA"
-                else:
-                    source = "TBCA"
-                status = "Com Match"
-                fields_count = len(pf.fields_to_fill) if pf.fields_to_fill else 0
-            elif pf.platform_name in manual_entries:
-                match_name = "Manual"
-                source = "Manual"
-                status = "Entrada Manual"
-                fields_count = len(manual_entries[pf.platform_name])
-            else:
-                status = "Sem Match"
+            match_name, source, confidence, status, fields_count = (
+                self._compute_row_fields(pf, manual_entries)
+            )
 
             dashboard.add_food_row(
                 i + 1, pf.platform_name[:30], match_name,

@@ -64,6 +64,61 @@ MANDATORY_FIELDS = [
     "sodio429", "lactose", "galactose",
 ]
 
+NUTRITION_FIELDS_SPEC = """{{
+  "valorEnergetico429": "valor em kcal",
+  "carboidratos429": "valor em g",
+  "acucaresTotais429": "valor em g",
+  "acucaresAdicionados": "valor em g",
+  "proteinas429": "valor em g",
+  "gordurasTotais429": "valor em g",
+  "gordurasSaturadas429": "valor em g",
+  "gordurasTrans429": "valor em g",
+  "fibraAlimentar429": "valor em g",
+  "sodio429": "valor em mg",
+  "lactose": "valor em g",
+  "galactose": "valor em g",
+  "colesterol": "valor em mg",
+  "calcio": "valor em mg",
+  "ferro": "valor em mg",
+  "fosforo": "valor em mg",
+  "magnesio": "valor em mg",
+  "potassio": "valor em mg",
+  "zinco": "valor em mg",
+  "vitaminaA": "valor em mcg",
+  "vitaminaB1": "valor em mg",
+  "vitaminaB2": "valor em mg",
+  "vitaminaB3": "valor em mg",
+  "vitaminaB6": "valor em mg",
+  "vitaminaB9": "valor em mcg",
+  "vitaminaB12": "valor em mcg",
+  "vitaminaC": "valor em mg",
+  "vitaminaD": "valor em mcg",
+  "vitaminaE": "valor em mg",
+  "vitaminaK": "valor em mcg"
+}}"""
+
+NUTRITION_BATCH_PROMPT_TEMPLATE = """Voce e um especialista em nutricao brasileira. Para CADA alimento numerado abaixo, forneca os valores nutricionais por 100g.
+
+Alimentos:
+{foods}
+
+Para cada alimento, retorne os campos no seguinte formato:
+{fields}
+
+Retorne APENAS um JSON valido (sem markdown, sem explicacoes):
+{{"results": [
+  {{"id": 0, "alimento": "nome exato", "campos": {{{{...}}}}}},
+  {{"id": 1, "alimento": "nome exato", "campos": {{{{...}}}}}}
+]}}
+
+Regras:
+- Use ponto como separador decimal (ex: 12.5)
+- Use "0" para valores nao disponiveis ou nao aplicaveis
+- Seja preciso baseado em tabelas nutricionais oficiais (TBCA/USDA)
+- Inclua TODOS os alimentos, na mesma ordem numerada, sem pular nenhum id
+- Retorne APENAS o JSON, nada mais
+"""
+
 MATCH_PROMPT_TEMPLATE = """Voce e um nutricionista brasileiro verificando associacoes de alimentos.
 
 Para cada par abaixo, verifique se o alimento da plataforma e o mesmo da tabela nutricional.
@@ -400,8 +455,16 @@ class OllamaProvider(AIProvider):
         if not kwargs.get("model"):
             kwargs["model"] = "llama3.2"
         super().__init__(name="ollama", **kwargs)
+        # Modelos locais pequenos: lotes menores e mais tempo
+        self.preferred_batch_size = 8
+        self.timeout = max(self.timeout, 120)
 
     def _call_api(self, prompt: str) -> str:
+        options = {
+            "temperature": 0.1,
+            "num_predict": 3072,
+            "num_ctx": 8192,
+        }
         try:
             import ollama as ollama_lib
         except ImportError:
@@ -413,7 +476,8 @@ class OllamaProvider(AIProvider):
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 1024}
+                    "format": "json",
+                    "options": options,
                 },
                 timeout=self.timeout,
             )
@@ -423,7 +487,8 @@ class OllamaProvider(AIProvider):
         response = ollama_lib.generate(
             model=self.model,
             prompt=prompt,
-            options={"temperature": 0.1, "num_predict": 1024}
+            format="json",
+            options=options,
         )
         return response.get("response", "")
 
@@ -536,6 +601,138 @@ class NutritionAIFinder:
 
         return AIResult(food_name=food_name, provider="none",
                        error="Nenhum provedor disponivel ou retornou dados")
+
+    def find_batch(self, food_names: list[str], batch_size: int = 15,
+                   gui_callback=None) -> dict[str, AIResult]:
+        """
+        Busca valores nutricionais para varios alimentos em lote.
+
+        Envia multiplos alimentos por request (muito mais rapido que
+        uma chamada por alimento). Retorna mapa por nome normalizado:
+        {nome.lower().strip(): AIResult}
+        """
+        results: dict[str, AIResult] = {}
+
+        # Cache primeiro
+        pending = []
+        for name in food_names:
+            key = name.lower().strip()
+            if key in self._cache:
+                fields = self._cache[key]
+                ar = AIResult(food_name=name, provider="cache",
+                              fields=fields,
+                              confidence=self.providers[0]._estimate_confidence(fields)
+                              if self.providers else 80.0)
+                results[key] = ar
+            else:
+                pending.append(name)
+
+        for provider in self.providers:
+            if not provider.is_available() or not pending:
+                continue
+
+            still_pending = []
+            aborted = False
+            pos = 0
+            prov_batch = min(
+                batch_size,
+                getattr(provider, "preferred_batch_size", batch_size),
+            )
+            while pos < len(pending):
+                batch = pending[pos:pos + prov_batch]
+                pos += prov_batch
+                lines = [
+                    f'{i}. "{name}"'
+                    for i, name in enumerate(batch)
+                ]
+                prompt = NUTRITION_BATCH_PROMPT_TEMPLATE.format(
+                    foods="\n".join(lines),
+                    fields=NUTRITION_FIELDS_SPEC,
+                )
+
+                try:
+                    raw = provider._call_api(prompt)
+                except Exception as e:
+                    logger.warning(f"Lote IA falhou ({provider.name}): {e}")
+                    if gui_callback:
+                        gui_callback(
+                            f"  IA ({provider.name}): erro no lote "
+                            f"({str(e)[:70]})"
+                        )
+                    err_str = str(e).lower()
+                    still_pending.extend(batch)
+                    if ("quota" in err_str
+                            or "resource_exhausted" in err_str
+                            or "rate_limit" in err_str
+                            or "429" in err_str):
+                        aborted = True
+                        break
+                    continue
+
+                # Itens que este lote ainda nao resolveu
+                batch_pending = list(batch)
+                parsed = provider._parse_json_response(raw)
+                if parsed and isinstance(parsed.get("results"), list):
+                    for r in parsed["results"]:
+                        idx = r.get("id")
+                        if not isinstance(idx, int):
+                            continue
+                        if idx < 0 or idx >= len(batch):
+                            continue
+                        name = batch[idx]
+                        key = name.lower().strip()
+                        if name in batch_pending:
+                            batch_pending.remove(name)
+                        if key in results:
+                            continue
+                        fields = r.get("campos")
+                        if not isinstance(fields, dict) or not fields:
+                            # Alguns modelos devolvem os campos achatados
+                            # no proprio item em vez de aninhados em "campos"
+                            fields = {
+                                k: v for k, v in r.items()
+                                if k not in ("id", "alimento", "nome",
+                                             "name", "campos", "confianca")
+                                and isinstance(v, (str, int, float))
+                            }
+                        ar = AIResult(food_name=name,
+                                      provider=provider.name)
+                        if fields:
+                            try:
+                                ar.fields = provider._convert_values(fields)
+                                ar.confidence = provider._estimate_confidence(ar.fields)
+                            except Exception as e:
+                                ar.error = f"Erro ao converter campos: {e}"
+                        else:
+                            ar.error = "IA sem dados para o alimento"
+                        results[key] = ar
+                        if ar.fields and not ar.error:
+                            self._cache[key] = ar.fields
+
+                resolved_n = len(batch) - len(batch_pending)
+                logger.info(
+                    f"  IA batch ({provider.name}): {resolved_n}/"
+                    f"{len(batch)} resolvidos neste lote"
+                )
+                if gui_callback and resolved_n:
+                    gui_callback(
+                        f"  IA ({provider.name}): +{resolved_n} alimentos"
+                    )
+
+                still_pending.extend(batch_pending)
+
+            # Proximo provedor so tenta o que ficou pendente de verdade
+            pending = still_pending
+            if aborted:
+                continue
+
+        for name in pending:
+            results[name.lower().strip()] = AIResult(
+                food_name=name, provider="none",
+                error="Nenhum provedor disponivel ou retornou dados",
+            )
+
+        return results
 
     def test_provider(self, provider_name: str = None) -> dict:
         """Testa um provedor especifico com alimento de exemplo."""

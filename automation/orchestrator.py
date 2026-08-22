@@ -206,7 +206,7 @@ class Orchestrator:
         return all_foods
 
     def step3_match_foods(self, platform_foods: list[dict],
-                          gui_callback=None) -> list[ProcessedFood]:
+                          gui_callback=None, on_item=None) -> list[ProcessedFood]:
         """Fase 3: Encontra correspondencias platform <-> TBCA (rapido, sem web requests)."""
         logger.info("Fase 3: Buscando correspondencias")
 
@@ -228,12 +228,16 @@ class Orchestrator:
                     else "Ja conferido pela nutricionista"
                 )
                 processed.append(pf)
+                if on_item:
+                    on_item(pf)
                 continue
 
             match = matches.get(name)
             pf = ProcessedFood(platform_name=name, match=match)
             if match:
                 pf.status = "matched"
+                if on_item:
+                    on_item(pf)
             else:
                 pf.status = "no_match"
                 no_match_foods.append(pf)
@@ -246,13 +250,19 @@ class Orchestrator:
         still_unmatched = [p for p in processed if p.status == "no_match"]
         if still_unmatched and self.settings.usda.api_key:
             logger.info(f"Fase 3c: Buscando via USDA para {len(still_unmatched)} alimentos")
-            self._usda_fallback(still_unmatched, gui_callback=gui_callback)
+            self._usda_fallback(still_unmatched, gui_callback=gui_callback,
+                                on_item=on_item)
 
         # Fase 3d: Buscar via IA para alimentos sem match TBCA/USDA
         still_unmatched = [p for p in processed if p.status == "no_match"]
         if self.ai_finder and self.settings.ai.auto_fallback and still_unmatched:
             logger.info(f"Fase 3d: Buscando via IA para {len(still_unmatched)} alimentos")
-            self._ai_fallback(still_unmatched, gui_callback=gui_callback)
+            self._ai_fallback(still_unmatched, gui_callback=gui_callback,
+                              on_item=on_item)
+            # Itens que ficaram sem match tambem sao exibidos
+            if on_item:
+                for p in [p for p in processed if p.status == "no_match"]:
+                    on_item(p)
 
         # Fase 3e: Verificar matches suspeitos via IA
         matched_foods = [p for p in processed if p.status == "matched" and p.match]
@@ -280,7 +290,7 @@ class Orchestrator:
         return False
 
     def _usda_fallback(self, no_match_foods: list[ProcessedFood],
-                       gui_callback=None):
+                       gui_callback=None, on_item=None):
         """Busca dados nutricionais via USDA para alimentos sem match TBCA."""
         if not self.settings.usda.api_key:
             if gui_callback:
@@ -367,6 +377,9 @@ class Orchestrator:
 
             except Exception as e:
                 logger.warning(f"  USDA erro para {pf.platform_name}: {e}")
+
+            if on_item:
+                on_item(pf)
 
         logger.info(f"USDA: {usda_count}/{len(no_match_foods)} alimentos encontrados")
         if gui_callback:
@@ -456,8 +469,8 @@ class Orchestrator:
             logger.info(f"  {len(food.nutrients)} nutrientes carregados")
 
     def _ai_fallback(self, no_match_foods: list[ProcessedFood],
-                     gui_callback=None):
-        """Busca valores nutricionais via IA para alimentos sem match."""
+                     gui_callback=None, on_item=None):
+        """Busca valores nutricionais via IA em lotes (rapido)."""
         if not self.ai_finder:
             if gui_callback:
                 gui_callback("  IA: finder nao configurado")
@@ -470,72 +483,43 @@ class Orchestrator:
                 gui_callback("  IA: nenhum provedor disponivel")
             return
 
+        names = [pf.platform_name for pf in no_match_foods]
         logger.info(f"Provedores IA disponiveis: {available}")
         if gui_callback:
-            gui_callback(f"  IA: provedores {available} - consultando {len(no_match_foods)} alimentos...")
+            gui_callback(
+                f"  IA: consultando {len(names)} alimentos "
+                f"em lotes de 15..."
+            )
+
+        results = self.ai_finder.find_batch(
+            names, batch_size=15, gui_callback=gui_callback
+        )
+
         ai_count = 0
-        consecutive_failures = 0
-
-        for i, pf in enumerate(no_match_foods):
-            available_now = self.ai_finder.get_available_providers()
-            if not available_now:
-                if gui_callback:
-                    gui_callback(f"  IA: todos os provedores esgotados - parando na {i+1}/{len(no_match_foods)}")
-                break
-
-            try:
-                if gui_callback and (i + 1) % 5 == 0:
-                    gui_callback(f"  IA: {i+1}/{len(no_match_foods)} consultados, {ai_count} encontrados")
-
-                result = self.ai_finder.find_with_result(pf.platform_name)
-
-                if result.success and result.fields:
-                    pf.match = MatchResult(
-                        platform_name=pf.platform_name,
-                        tbca_name=f"[IA:{result.provider}] {pf.platform_name}",
-                        tbca_code=f"AI-{result.provider}",
-                        confidence=result.confidence,
-                        match_method=f"ai_{result.provider}",
-                        tbca_nutrients={},
-                    )
-                    pf.fields_to_fill = result.fields
-                    pf.status = "matched"
-                    ai_count += 1
-                    consecutive_failures = 0
-
-                    logger.info(
-                        f"  IA ({result.provider}): {pf.platform_name} -> "
-                        f"{len(result.fields)} campos "
-                        f"({result.confidence:.0f}%, {result.duration_ms}ms)"
-                    )
-                else:
-                    consecutive_failures += 1
-                    if consecutive_failures >= 5 and consecutive_failures == i + 1:
-                        logger.warning(f"  IA: {consecutive_failures} falhas consecutivas, parando")
-                        if gui_callback:
-                            gui_callback(f"  IA: {consecutive_failures} falhas consecutivas - provedor indisponivel")
-                        break
-                    logger.debug(
-                        f"  IA: {pf.platform_name} sem dados "
-                        f"({result.error})"
-                    )
-
-            except Exception as e:
-                consecutive_failures += 1
-                err_str = str(e)
-                if "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
-                    logger.warning(f"  IA quota esgotado: {e}")
-                    if gui_callback:
-                        gui_callback(f"  IA: quota esgotado - parando na {i+1}/{len(no_match_foods)}")
-                    break
-                if consecutive_failures >= 5:
-                    logger.warning(f"  IA: {consecutive_failures} erros consecutivos, parando")
-                    if gui_callback:
-                        gui_callback(f"  IA: {consecutive_failures} erros consecutivos - parando")
-                    break
-                logger.warning(
-                    f"  IA erro para {pf.platform_name}: {e}"
+        for pf in no_match_foods:
+            res = results.get(pf.platform_name.lower().strip())
+            if res and res.success and res.fields:
+                pf.match = MatchResult(
+                    platform_name=pf.platform_name,
+                    tbca_name=f"[IA:{res.provider}] {pf.platform_name}",
+                    tbca_code=f"AI-{res.provider}",
+                    confidence=res.confidence,
+                    match_method=f"ai_{res.provider}",
+                    tbca_nutrients={},
                 )
+                pf.fields_to_fill = res.fields
+                pf.status = "matched"
+                ai_count += 1
+                logger.info(
+                    f"  IA ({res.provider}): {pf.platform_name} -> "
+                    f"{len(res.fields)} campos "
+                    f"({res.confidence:.0f}%, {res.duration_ms}ms)"
+                )
+            elif res:
+                logger.debug(f"  IA: {pf.platform_name} sem dados ({res.error})")
+
+            if on_item:
+                on_item(pf)
 
         logger.info(
             f"IA: {ai_count}/{len(no_match_foods)} alimentos "
