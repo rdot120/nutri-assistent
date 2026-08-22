@@ -618,13 +618,17 @@ class NutritionAIFinder:
                        error="Nenhum provedor disponivel ou retornou dados")
 
     def find_batch(self, food_names: list[str], batch_size: int = 12,
-                   gui_callback=None) -> dict[str, AIResult]:
+                   gui_callback=None,
+                   exclude_provider: str = None) -> dict[str, AIResult]:
         """
         Busca valores nutricionais para varios alimentos em lote.
 
         Envia multiplos alimentos por request (muito mais rapido que
         uma chamada por alimento). Retorna mapa por nome normalizado:
         {nome.lower().strip(): AIResult}
+
+        exclude_provider: ignora um provedor (ex. para autoconsistencia
+        com uma IA DIFERENTE da que gerou os valores originais).
         """
         results: dict[str, AIResult] = {}
 
@@ -644,6 +648,12 @@ class NutritionAIFinder:
 
         for provider in self.providers:
             if not provider.is_available() or not pending:
+                continue
+
+            # Autoconsistencia exige IA independente da original
+            if exclude_provider and provider.name == exclude_provider:
+                logger.info(f"Pulando {provider.name} (excluido por "
+                            f"verificacao independente)")
                 continue
 
             # Modelo local e lento demais para cargas grandes: se a
