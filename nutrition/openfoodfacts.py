@@ -6,6 +6,7 @@ do Brasil e priorizando os mais populares/completos.
 import logging
 import re
 import time
+from difflib import SequenceMatcher
 
 import requests
 
@@ -58,26 +59,46 @@ class OpenFoodFactsSource:
             time.sleep(1.05 - elapsed)
         self._last_request = time.time()
 
+    def _search(self, query: str) -> list[dict]:
+        """Etapa 1: busca codigos candidatos no Search API."""
+        self._throttle()
+        resp = self.session.get(
+            SEARCH_URL,
+            params={
+                "q": query,
+                "page_size": 8,
+                "countries_tags": "brazil",
+                "sort_by": "popularity_key",
+            },
+            timeout=self.timeout,
+        )
+        if resp.status_code != 200:
+            logger.debug("OF search status %s para '%s'",
+                         resp.status_code, query)
+            return []
+        return resp.json().get("hits") or []
+
+    def _fetch_product(self, code: str) -> dict | None:
+        """Etapa 2: tabela nutricional completa via API v2."""
+        try:
+            self._throttle()
+            resp = self.session.get(
+                f"https://world.openfoodfacts.org/api/v2/product/{code}.json",
+                params={"fields": "product_name,brands,nutriments"},
+                timeout=self.timeout,
+            )
+            if resp.status_code != 200:
+                return None
+            return resp.json().get("product") or {}
+        except Exception as exc:
+            logger.warning("OF produto %s: %s", code, exc)
+            return None
+
     def search_product(self, query: str) -> dict | None:
         """Busca um produto e retorna {"fields", "product_name", "brands",
         "score"} ou None se nada confiavel for encontrado."""
         try:
-            self._throttle()
-            resp = self.session.get(
-                SEARCH_URL,
-                params={
-                    "q": query,
-                    "page_size": 8,
-                    "countries_tags": "brazil",
-                    "sort_by": "popularity_key",
-                },
-                timeout=self.timeout,
-            )
-            if resp.status_code != 200:
-                logger.debug("OF status %s para '%s'",
-                             resp.status_code, query)
-                return None
-            hits = resp.json().get("hits") or []
+            hits = self._search(query)
         except Exception as exc:
             logger.warning("OF erro '%s': %s", query, exc)
             return None
@@ -86,30 +107,63 @@ class OpenFoodFactsSource:
         # Token principal (marca/produto) precisa constar no nome do hit
         _STOP = {"em", "de", "da", "do", "com", "para", "e"}
         main_tokens = q_tokens - _STOP
+
         best = None
+        checked = 0
         for hit in hits:
             name = (hit.get("product_name") or "").strip()
             if not name or len(name) < 3:
                 continue
-            fields = self._extract_fields(hit.get("nutriments") or {})
-            if len(fields) < 6 or "valorEnergetico429" not in fields:
-                continue
-
             n_tokens = set(_norm(name).split())
             if main_tokens and not (main_tokens & n_tokens):
                 continue
+            if checked >= 3:  # no maximo 3 produtos completos por consulta
+                break
+            full = self._fetch_product(hit.get("code"))
+            if not full:
+                continue
+            checked += 1
 
-            # Score: completude + quantidade de campos + sobreposicao de nome
-            overlap = (len(q_tokens & n_tokens)
-                       / max(1, len(q_tokens))) if q_tokens else 0
-            score = (min(1.0, hit.get("completeness") or 0) * 30
-                     + min(1.0, len(fields) / 8) * 25
-                     + overlap * 45)
+            full_name = ((full.get("product_name") or "").strip()
+                         or name)
+            fields = self._extract_fields(full.get("nutriments") or {})
+            if len(fields) < 6 or "valorEnergetico429" not in fields:
+                continue
+
+            # Score: quantidade campos + sobreposicao de nome + similaridade
+            fn_tokens = set(_norm(full_name).split())
+            overlap = max(
+                len(q_tokens & n_tokens),
+                len(q_tokens & fn_tokens),
+            ) / max(1, len(q_tokens)) if q_tokens else 0
+            seq_ratio = SequenceMatcher(
+                None, _norm(query), _norm(full_name)).ratio()
+
+            # Portao: o primeiro token da busca (o produto em si, ex.
+            # "nescau", "bolo") precisa constar no nome do hit; alternativa
+            # e sobreposicao alta de tokens. Evita casar so pela marca
+            # (ex. "Nescau 2.0" -> "Licuado Nestle").
+            ordered_main = [t for t in _norm(query).split()
+                            if t not in _STOP]
+            fn_tokens = set(_norm(full_name).split())
+            first_ok = bool(ordered_main) \
+                and ordered_main[0] in fn_tokens
+            overlap = max(
+                len(q_tokens & set(n_tokens)),
+                len(q_tokens & fn_tokens),
+            ) / max(1, len(q_tokens)) if q_tokens else 0
+            if not (first_ok or overlap >= 0.40):
+                continue
+
+            seq_ratio = SequenceMatcher(
+                None, _norm(query), _norm(full_name)).ratio()
+            score = (min(1.0, len(fields) / 8) * 30
+                     + overlap * 35 + seq_ratio * 35)
 
             if not best or score > best["score"]:
-                brands = ", ".join(hit.get("brands") or [])[:60]
+                brands = ", ".join(full.get("brands") or [])[:60]
                 best = {
-                    "product_name": name,
+                    "product_name": full_name,
                     "brands": brands,
                     "fields": fields,
                     "score": round(min(score, 100.0), 1),
