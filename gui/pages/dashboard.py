@@ -175,6 +175,16 @@ class DashboardPage(ctk.CTkFrame):
         )
         self.table.pack(fill="both", expand=True, padx=24, pady=(4, 8))
 
+        # Loop de aprendizado: duplo clique valida os valores do alimento
+        self.on_validate_request = None
+        self.table._tree.bind("<Double-1>", self._on_row_double)
+
+        ctk.CTkLabel(
+            self, text="Dica: duplo clique em um alimento salva seus valores "
+                       "como validados (prioridade maxima nas proximas cargas)",
+            font=FONTS["small"], text_color=COLORS["text_soft"], anchor="w"
+        ).pack(fill="x", padx=28, pady=(0, 2))
+
     def _build_log(self):
         frame = ctk.CTkFrame(self, fg_color="transparent")
         frame.pack(fill="x", padx=24, pady=(0, 12))
@@ -315,6 +325,17 @@ class DashboardPage(ctk.CTkFrame):
         )
         self._all_rows.append(row)
         return self.table.insert(row)
+
+    def _on_row_double(self, event):
+        """Duplo clique na linha: pede ao app para validar os valores."""
+        if not self.on_validate_request:
+            return
+        sel = self.table._tree.selection()
+        if not sel:
+            return
+        values = self.table._tree.item(sel[0], "values")
+        if values and len(values) > 1:
+            self.on_validate_request(values[1])
 
     def update_food_status(self, item_id: str, status: str,
                            match_name: str = None, source: str = None,

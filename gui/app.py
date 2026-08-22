@@ -212,6 +212,8 @@ class App(ctk.CTk):
         container.grid_columnconfigure(0, weight=1)
 
         self._pages["dashboard"] = DashboardPage(container, self)
+        self._pages["dashboard"].on_validate_request = \
+            self._validate_food_values
         self._pages["search"] = SearchPage(container, self)
         self._pages["import_data"] = ImportPage(container, self)
         self._pages["manual_entry"] = ManualEntryPage(container, self)
@@ -526,6 +528,34 @@ class App(ctk.CTk):
             dashboard.update_progress(0, max(1, self._live_total))
 
         self.after(0, reset)
+
+    def _validate_food_values(self, platform_name: str):
+        """Duplo clique na tabela: salva os valores do alimento como
+        validados pelo usuario (prioridade maxima nas proximas cargas)."""
+        pool = list(getattr(self, "_live_rows", [])) + \
+            list(getattr(self, "_processed", []) or [])
+        pf = next((p for p in pool
+                   if p.platform_name == platform_name), None)
+        if not pf or not pf.fields_to_fill:
+            self._set_status(f"'{platform_name}': sem valores para validar")
+            return
+        try:
+            self.db.save_manual_entry(platform_name,
+                                      dict(pf.fields_to_fill))
+        except Exception as exc:
+            logger.error(f"Erro ao salvar entrada manual "
+                         f"({platform_name}): {exc}")
+            self._set_status(f"Erro ao validar '{platform_name}'")
+            return
+        if pf.match:
+            pf.match.match_method = "manual"
+            pf.match.confidence = 99.0
+            pf.match.tbca_name = f"[Validado] {platform_name}"
+        pf.status = "matched"
+        self._set_status(f"Valores de '{platform_name}' salvos como "
+                         f"VALIDADOS ({len(pf.fields_to_fill)} campos)")
+        logger.info(f"Entrada manual salva via GUI: {platform_name} "
+                    f"({len(pf.fields_to_fill)} campos)")
 
     def _live_on_item(self, pf):
         """Callback do orquestrador: adiciona item na tabela em tempo real."""
