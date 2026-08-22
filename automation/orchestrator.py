@@ -5,6 +5,7 @@ Coordena: busca TBCA -> matching -> preenchimento -> salvamento.
 import time
 import logging
 import json
+import random
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, asdict
@@ -54,6 +55,7 @@ class Orchestrator:
             medium_threshold=settings.matching.medium_confidence,
         )
         self.ai_finder = create_default_finder(settings)
+        self.last_audit_stats: dict = {}
         self.usda = USDAScraper(
             api_key=settings.usda.api_key,
             cache_db_path=DATA_DIR / "usda_cache.db"
@@ -336,6 +338,20 @@ class Orchestrator:
                 logger.info(f"Fase 3f: Autoconsistencia em {len(suspicious)} "
                             f"itens de IA com baixa confianca")
                 self._self_check_suspicious(suspicious, gui_callback=gui_callback)
+
+        # Fase 3g: Auditoria amostral - mede a precisao media da carga
+        if self.ai_finder:
+            eligible = [
+                p for p in processed
+                if p.status == "matched" and p.match
+                and p.match.match_method != "manual"
+                and p.fields_to_fill
+            ]
+            random.shuffle(eligible)
+            sample = eligible[:8]
+            if sample:
+                logger.info(f"Fase 3g: Auditoria amostral de {len(sample)} itens")
+                self._audit_sample(sample, gui_callback=gui_callback)
 
         return processed
         return processed
@@ -637,52 +653,122 @@ class Orchestrator:
 
     def _self_check_suspicious(self, foods: list[ProcessedFood],
                                gui_callback=None):
-        """Fase 3f: reconsulta itens de IA duvidosos e compara respostas.
+        """Fase 3f: reconsulta itens de IA duvidosos com uma IA DIFERENTE
+        da que gerou os valores (verificacao independente de verdade).
 
         Convergencia (<25% de desvio nos macros) sobe a confianca;
         divergencia forte (>45%) manda para revisao.
         """
         sample = foods[:40]
-        names = [pf.platform_name for pf in sample]
-        if gui_callback:
-            gui_callback(f"  Autoconsistencia: revalidando {len(sample)} itens...")
 
-        results = self.ai_finder.find_batch(
-            names, batch_size=8, gui_callback=gui_callback
-        )
+        # Agrupa por provedor original (metodo "ai_groq_rec" -> "groq")
+        by_provider: dict[str, list[ProcessedFood]] = {}
+        for pf in sample:
+            prov = (pf.match.match_method or "")[len("ai_"):]
+            if prov.endswith("_rec"):
+                prov = prov[:-len("_rec")]
+            by_provider.setdefault(prov, []).append(pf)
 
         boosted = demoted = 0
-        for pf in sample:
-            res2 = results.get(pf.platform_name.lower().strip())
-            if not (res2 and res2.success and res2.fields):
-                continue
+        for prov, items in by_provider.items():
+            names = [pf.platform_name for pf in items]
+            if gui_callback:
+                gui_callback(f"  Autoconsistencia: revalidando {len(names)} "
+                             f"itens com IA != {prov or 'original'}...")
 
-            dev = self._macro_deviation(pf.fields_to_fill, res2.fields)
-            if dev is None:
-                continue
+            results = self.ai_finder.find_batch(
+                names, batch_size=8, gui_callback=gui_callback,
+                exclude_provider=prov or None,
+            )
 
-            if dev <= 0.25:
-                pf.match.confidence = min(88.0, pf.match.confidence + 15.0)
-                boosted += 1
-                logger.info(f"  Autocheck OK ({dev*100:.0f}%): "
-                            f"{pf.platform_name} -> conf "
-                            f"{pf.match.confidence:.0f}%")
-            elif dev >= 0.45:
-                pf.match.confidence = max(10.0, pf.match.confidence - 15.0)
-                pf.status = "review_needed"
-                pf.suggestion = (f"IA divergiu {dev*100:.0f}% na "
-                                 f"revalidacao - revisar valores")
-                demoted += 1
-                logger.warning(f"  Autocheck DIVERGENTE ({dev*100:.0f}%): "
-                               f"{pf.platform_name}")
-            else:
-                pf.match.confidence = max(10.0, pf.match.confidence - 5.0)
+            for pf in items:
+                res2 = results.get(pf.platform_name.lower().strip())
+                if not (res2 and res2.success and res2.fields):
+                    continue
+
+                dev = self._macro_deviation(pf.fields_to_fill, res2.fields)
+                if dev is None:
+                    continue
+
+                if dev <= 0.25:
+                    pf.match.confidence = min(88.0,
+                                              pf.match.confidence + 15.0)
+                    boosted += 1
+                    logger.info(f"  Autocheck OK ({dev*100:.0f}%): "
+                                f"{pf.platform_name} -> conf "
+                                f"{pf.match.confidence:.0f}%")
+                elif dev >= 0.45:
+                    pf.match.confidence = max(10.0,
+                                              pf.match.confidence - 15.0)
+                    pf.status = "review_needed"
+                    pf.suggestion = (
+                        f"IA divergiu {dev*100:.0f}% na revalidacao "
+                        f"- revisar valores"
+                    )
+                    demoted += 1
+                    logger.warning(f"  Autocheck DIVERGENTE ({dev*100:.0f}%): "
+                                   f"{pf.platform_name}")
+                else:
+                    pf.match.confidence = max(10.0,
+                                              pf.match.confidence - 5.0)
 
         logger.info(f"Autoconsistencia: +{boosted} confirmados, "
                     f"{demoted} para revisao")
         if gui_callback:
             gui_callback(f"  Autoconsistencia: {boosted} confirmados, "
                          f"{demoted} divergentes")
+
+    def _audit_sample(self, foods: list[ProcessedFood], gui_callback=None):
+        """Fase 3g: auditoria amostral - reconsulta uma amostra aleatoria
+        da carga e mede o desvio medio. Mede a saude geral da execucao;
+        divergencias extremas (>60%) vao para revisao."""
+        if not foods:
+            return
+
+        names = [pf.platform_name for pf in foods]
+        if gui_callback:
+            gui_callback(f"  Amostragem: revalidando {len(names)} itens "
+                         f"aleatorios...")
+
+        results = self.ai_finder.find_batch(
+            names, batch_size=min(8, max(1, len(names))),
+            gui_callback=gui_callback,
+        )
+
+        devs: list[float] = []
+        agree = 0
+        divergent: list[tuple[ProcessedFood, float]] = []
+        for pf in foods:
+            res2 = results.get(pf.platform_name.lower().strip())
+            if not (res2 and res2.success and res2.fields):
+                continue
+            dev = self._macro_deviation(pf.fields_to_fill, res2.fields)
+            if dev is None:
+                continue
+            devs.append(dev)
+            if dev <= 0.25:
+                agree += 1
+            elif dev >= 0.60:
+                divergent.append((pf, dev))
+
+        mean_dev = (sum(devs) / len(devs) * 100.0) if devs else 0.0
+        self.last_audit_stats = {
+            "amostra": len(devs),
+            "concordantes": agree,
+            "desvio_medio_pct": round(mean_dev, 1),
+        }
+        logger.info(f"Amostragem: {len(devs)} medidos, {agree} concordantes "
+                    f"(<25%), desvio medio {mean_dev:.0f}%")
+        if gui_callback:
+            gui_callback(f"  Amostragem: desvio medio {mean_dev:.0f}% "
+                         f"({agree}/{len(devs)} concordantes)")
+
+        for pf, dev in divergent:
+            pf.status = "review_needed"
+            pf.suggestion = (f"Amostra: IA divergiu {dev*100:.0f}% "
+                             f"- revisar")
+            logger.warning(f"  Amostra DIVERGENTE ({dev*100:.0f}%): "
+                           f"{pf.platform_name}")
 
     @staticmethod
     def _macro_deviation(fields_a: dict, fields_b: dict) -> Optional[float]:
