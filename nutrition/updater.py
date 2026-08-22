@@ -93,8 +93,6 @@ class UpdateChecker:
         """Verifica todas as fontes habilitadas."""
         if self.settings.tbca.enabled:
             self._check_tbca()
-        if self.settings.usda.enabled:
-            self._check_usda()
 
     def _check_tbca(self):
         """Verifica TBCA por atualizacoes."""
@@ -156,22 +154,6 @@ class UpdateChecker:
 
         self._notify("result", result)
 
-    def _check_usda(self):
-        """Verifica USDA por atualizacoes."""
-        self._notify("checking", "USDA")
-        result = UpdateResult(source="usda", checked_at=time.time())
-
-        # A API publica do USDA nao expoe endpoint de mudancas;
-        # /food/changes responde 400. A busca (/foods/search)
-        # permanece funcional e nao depende desta verificacao.
-        result.message = (
-            "USDA: verificacao de mudancas indisponivel "
-            "(endpoint nao exposto pela API)"
-        )
-        self._last_check["usda"] = time.time()
-
-        self._notify("result", result)
-
     def _notify(self, event: str, data):
         """Notifica a GUI via callback."""
         if self.callback:
@@ -185,14 +167,9 @@ class UpdateChecker:
         return {
             "running": self._running,
             "last_check_tbca": self._last_check.get("tbca", 0),
-            "last_check_usda": self._last_check.get("usda", 0),
             "interval_hours": self._check_interval / 3600,
         }
 
     def force_check_tbca(self):
         """Forca verificacao imediata do TBCA."""
         threading.Thread(target=self._check_tbca, daemon=True).start()
-
-    def force_check_usda(self):
-        """Forca verificacao imediata do USDA."""
-        threading.Thread(target=self._check_usda, daemon=True).start()
