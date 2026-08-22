@@ -680,7 +680,10 @@ class NutritionAIFinder:
                             f"({str(e)[:70]})"
                         )
                     err_str = str(e).lower()
+                    # Devolve ao pool o lote falho E todos os lotes
+                    # ainda nao tentados deste provedor
                     still_pending.extend(batch)
+                    still_pending.extend(pending[pos:])
                     if ("quota" in err_str
                             or "resource_exhausted" in err_str
                             or "rate_limit" in err_str
@@ -730,6 +733,12 @@ class NutritionAIFinder:
                             self._cache[key] = ar.fields
 
                 resolved_n = len(batch) - len(batch_pending)
+                if resolved_n == 0:
+                    # Diagnostico: mostra o inicio da resposta bruta
+                    logger.warning(
+                        f"  IA batch ({provider.name}): nenhum item "
+                        f"parseado. Resposta bruta: {str(raw)[:300]!r}"
+                    )
                 logger.info(
                     f"  IA batch ({provider.name}): {resolved_n}/"
                     f"{len(batch)} resolvidos neste lote"

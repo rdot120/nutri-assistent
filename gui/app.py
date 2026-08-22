@@ -481,12 +481,19 @@ class App(ctk.CTk):
         """Com Match: correspondencias de qualquer fonte (TBCA, USDA, IA)."""
         return sum(1 for p in processed if p.match)
 
+    # Motivos de skip que indicam alimento ja pronto na plataforma
+    _DONE_SKIP_REASONS = (
+        "already_filled", "reviewed", "prefilled_salvo", "prefilled_conferido",
+    )
+
     def _count_filled(self, processed):
-        """Preenchidos: tinham dados na plataforma e ainda nao foram salvos."""
+        """Preenchidos: todo alimento que ja esta pronto na plataforma
+        (preenchido, conferido ou salvo) + os preenchidos nesta sessao."""
         return sum(
             1 for p in processed
-            if p.status == "filled"
-            or (p.status == "skipped" and p.skip_reason == "already_filled")
+            if p.status in ("filled", "saved")
+            or (p.status == "skipped"
+                and p.skip_reason in self._DONE_SKIP_REASONS)
         )
 
     def _count_saved(self, processed):
@@ -589,14 +596,6 @@ class App(ctk.CTk):
                 i + 1, pf.platform_name[:30], match_name,
                 source, confidence, status, fields_count
             )
-
-        # Atualizar sugestoes
-        suggestions = [
-            {"name": p.platform_name, "reason": p.skip_reason,
-             "suggestion": p.suggestion}
-            for p in processed if p.status in ("skipped", "removed", "review_needed")
-        ]
-        dashboard.update_suggestions(suggestions)
 
         status_parts = [f"Carregado: {matched}/{total} matches"]
         if skipped > 0:

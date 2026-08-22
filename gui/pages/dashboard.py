@@ -32,7 +32,6 @@ class DashboardPage(ctk.CTkFrame):
         self._build_progress()
         self._build_actions()
         self._build_filters()
-        self._build_suggestions()
         self._build_table()
         self._build_log()
 
@@ -168,88 +167,6 @@ class DashboardPage(ctk.CTkFrame):
                 frame, text=text, variable=self._filter_var,
                 value=value, command=self._apply_filter
             ).pack(side="left", padx=(8 if text != "Todos" else 4, 0))
-
-    def _build_suggestions(self):
-        self._suggestions_frame = ctk.CTkFrame(
-            self, fg_color=COLORS["card_bg"], corner_radius=10
-        )
-
-        header = ctk.CTkFrame(self._suggestions_frame, fg_color="transparent")
-        header.pack(fill="x", padx=12, pady=(8, 4))
-
-        self._sug_title = ctk.CTkLabel(
-            header, text="Sugestoes",
-            font=FONTS["section"], text_color=COLORS["accent"],
-            anchor="w"
-        )
-        self._sug_title.pack(side="left")
-
-        self._sug_count = ctk.CTkLabel(
-            header, text="0",
-            font=FONTS["small"], text_color=COLORS["text_soft"],
-            anchor="e"
-        )
-        self._sug_count.pack(side="right")
-
-        self._sug_scroll = ctk.CTkScrollableFrame(
-            self._suggestions_frame, fg_color="transparent",
-            height=100
-        )
-        self._sug_scroll.pack(fill="x", padx=12, pady=(0, 8))
-
-    def update_suggestions(self, suggestions: list[dict]):
-        """Atualiza lista de sugestoes no dashboard."""
-        for widget in self._sug_scroll.winfo_children():
-            widget.destroy()
-
-        if not suggestions:
-            self._suggestions_frame.pack_forget()
-            return
-
-        self._suggestions_frame.pack(
-            fill="x", padx=24, pady=(4, 4),
-            after=self._progress_label.master
-        )
-        self._sug_count.configure(text=f"{len(suggestions)} item(s)")
-
-        for sug in suggestions[:30]:
-            row = ctk.CTkFrame(self._sug_scroll, fg_color="transparent")
-            row.pack(fill="x", pady=1)
-
-            reason = sug.get("reason", "")
-            if reason == "already_filled":
-                icon = "Preenchido"
-                color = COLORS.get("primary", "#767c57")
-            elif reason == "reviewed":
-                icon = "Conferido"
-                color = COLORS.get("success_dark", "#4a7c59")
-            elif reason == "removed_from_platform":
-                icon = "Removido"
-                color = COLORS.get("error", "#d9534f")
-            elif reason == "match_suspeito":
-                icon = "Revisar"
-                color = COLORS.get("accent", "#d4a84b")
-            else:
-                icon = "Info"
-                color = COLORS["text_soft"]
-
-            ctk.CTkLabel(
-                row, text=icon,
-                font=FONTS["small_bold"], text_color=color,
-                width=70, anchor="w"
-            ).pack(side="left", padx=(0, 8))
-
-            ctk.CTkLabel(
-                row, text=sug.get("name", ""),
-                font=FONTS["small"], text_color=COLORS["text"],
-                anchor="w"
-            ).pack(side="left", padx=(0, 8))
-
-            ctk.CTkLabel(
-                row, text=sug.get("suggestion", ""),
-                font=FONTS["small"], text_color=COLORS["text_soft"],
-                anchor="w"
-            ).pack(side="left", fill="x", expand=True)
 
     def _build_table(self):
         self.table = TreeviewFrame(
