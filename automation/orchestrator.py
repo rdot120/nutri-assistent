@@ -308,6 +308,22 @@ class Orchestrator:
             logger.info(f"Fase 3e: Verificando {len(matched_foods)} matches via IA")
             self._verify_matches(matched_foods, gui_callback=gui_callback)
 
+        # Fase 3e2: Auditoria IA dos valores de rotulos OF e IA modo tabela
+        # (o nome foi casado por portao rigoroso; agora audita os NUMEROS)
+        if self.ai_finder:
+            auditable = [
+                p for p in processed
+                if p.status == "matched" and p.match
+                and ((p.match.match_method == "off"
+                      and p.match.confidence < 78)
+                     or ((p.match.match_method or "").startswith("ai_")
+                         and not (p.match.match_method or "").endswith("_rec")))
+            ][:20]
+            if auditable:
+                logger.info(f"Fase 3e2: Auditando valores de "
+                            f"{len(auditable)} itens via IA")
+                self._audit_values(auditable, gui_callback=gui_callback)
+
         # Fase 3f: Autoconsistencia - revalidar itens de IA com confianca baixa
         if self.ai_finder:
             suspicious = [
@@ -578,6 +594,46 @@ class Orchestrator:
     def _sanity_check_fields(self, fields: dict):
         """Retorna (score 0-1, issues)."""
         return validate_fields(fields or {})
+
+    def _audit_values(self, foods: list[ProcessedFood], gui_callback=None):
+        """Fase 3e2: auditoria IA da plausibilidade dos valores.
+
+        Cobre rotulos OF e IA modo tabela (receita ja eh calculada e
+        sanity-checkada). Itens reprovados vao para revisao.
+        """
+        audited = flagged = 0
+        for pf in foods:
+            try:
+                vres = self.ai_finder.verify_fill(
+                    pf.platform_name, pf.fields_to_fill, {}
+                )
+            except Exception as exc:
+                logger.warning(f"  Auditoria falhou ({pf.platform_name}): {exc}")
+                continue
+            if not vres.ai_validated:
+                continue
+            audited += 1
+            if not vres.valid:
+                pf.status = "review_needed"
+                pf.suggestion = "Auditoria: " + "; ".join(
+                    str(i) for i in vres.issues[:2]
+                ) if vres.issues else "Auditoria: valores implausiveis"
+                flagged += 1
+                logger.warning(
+                    f"  Auditoria REPROVOU: {pf.platform_name} "
+                    f"({pf.suggestion[:60]})"
+                )
+            else:
+                pf.match.confidence = min(92.0, pf.match.confidence + 5.0)
+            if gui_callback and audited % 5 == 0:
+                gui_callback(f"  Auditoria: {audited}/{len(foods)}, "
+                             f"{flagged} reprovados")
+
+        logger.info(f"Auditoria de valores: {audited} auditados, "
+                    f"{flagged} reprovados")
+        if gui_callback:
+            gui_callback(f"  Auditoria: {audited} auditados, "
+                         f"{flagged} reprovados")
 
     def _self_check_suspicious(self, foods: list[ProcessedFood],
                                gui_callback=None):

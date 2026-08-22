@@ -472,6 +472,8 @@ class App(ctk.CTk):
                 source = "Rotulo OF"
             elif method == "usda":
                 source = "USDA"
+            elif method == "manual":
+                source = "Validado"
             else:
                 source = "TBCA"
             status = "Com Match"
