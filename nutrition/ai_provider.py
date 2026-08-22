@@ -97,18 +97,27 @@ NUTRITION_FIELDS_SPEC = """{{
   "vitaminaK": "valor em mcg"
 }}"""
 
-NUTRITION_BATCH_PROMPT_TEMPLATE = """Voce e um especialista em nutricao brasileira. Para CADA alimento numerado abaixo, forneca os valores nutricionais por 100g.
+NUTRITION_BATCH_PROMPT_TEMPLATE = """Voce e um especialista em nutricao brasileira. Para CADA alimento numerado abaixo, forneca os valores nutricionais por 100g PRONTO para consumo.
 
 Alimentos:
 {foods}
 
-Para cada alimento, retorne os campos no seguinte formato:
+Para cada alimento retorne tambem o campo "metodo":
+- "tabela": se for alimento basico, in natura ou industrializado conhecido. Use valores de tabelas oficiais (TBCA/TACO/USDA).
+- "receita": se for preparacao composta ou artesanal (bolos, tortas, salgados, molhos, pratos). NESTE CASO calcule assim:
+  1. Liste a receita tipica em "ingredientes" como [{{"n": "farinha de trigo", "g": 35}}, ...] com gramas que somem ~100g do produto FINAL pronto
+  2. Some os valores nutricionais de cada ingrediente usando tabelas oficiais que voce conhece
+  3. Ajuste pela perda de agua no preparo (assar/cozinhar reduz 10-20% do peso)
+  Nao invente valores diretos para o prato - derive dos ingredientes.
+
+Campos por alimento (valores por 100g):
 {fields}
 
 Retorne APENAS um JSON valido (sem markdown, sem explicacoes):
 {{"results": [
-  {{"id": 0, "alimento": "nome exato", "campos": {{{{...}}}}}},
-  {{"id": 1, "alimento": "nome exato", "campos": {{{{...}}}}}}
+  {{"id": 0, "alimento": "nome exato", "metodo": "tabela", "campos": {{{{...}}}}}},
+  {{"id": 1, "alimento": "nome exato", "metodo": "receita",
+    "ingredientes": [{{"n": "ingrediente", "g": 30}}], "campos": {{{{...}}}}}}
 ]}}
 
 Regras:
@@ -207,6 +216,7 @@ class AIResult:
     confidence: float = 0
     duration_ms: int = 0
     error: str = ""
+    method_note: str = ""   # "tabela" ou "receita" (quando informado)
 
     def __post_init__(self):
         if self.fields is None:
@@ -607,7 +617,7 @@ class NutritionAIFinder:
         return AIResult(food_name=food_name, provider="none",
                        error="Nenhum provedor disponivel ou retornou dados")
 
-    def find_batch(self, food_names: list[str], batch_size: int = 15,
+    def find_batch(self, food_names: list[str], batch_size: int = 12,
                    gui_callback=None) -> dict[str, AIResult]:
         """
         Busca valores nutricionais para varios alimentos em lote.
@@ -720,6 +730,9 @@ class NutritionAIFinder:
                             }
                         ar = AIResult(food_name=name,
                                       provider=provider.name)
+                        metodo = r.get("metodo")
+                        if isinstance(metodo, str):
+                            ar.method_note = metodo.strip().lower()
                         if fields:
                             try:
                                 ar.fields = provider._convert_values(fields)
