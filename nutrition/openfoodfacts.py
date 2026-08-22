@@ -68,7 +68,8 @@ class OpenFoodFactsSource:
                 "q": query,
                 "page_size": 8,
                 "countries_tags": "brazil",
-                "sort_by": "popularity_key",
+                # NOTA: sem sort_by - ordenacao por popularidade mata a
+                # relevancia da busca (retorna produtos aleatorios)
             },
             timeout=self.timeout,
         )
@@ -105,9 +106,18 @@ class OpenFoodFactsSource:
 
         q_tokens = set(_norm(query).split())
         # Token principal (marca/produto) precisa constar no nome do hit
-        _STOP = {"em", "de", "da", "do", "com", "para", "e"}
-        main_tokens = q_tokens - _STOP
+        _STOP = {"em", "de", "da", "do", "com", "para", "e", "po",
+                 "com", "tipo"}
+        # Palavras genericas: nao provam que eh o mesmo produto
+        _GENERIC = {"bolo", "biscoito", "bala", "suco", "barra", "pao",
+                    "queijo", "iogurte", "salgadinho", "sorvete",
+                    "chocolate", "cereal", "achocolatado", "manteiga",
+                    "torta", "pizza", "macarrao", "arroz", "feijao",
+                    "farinha", "recheado"}
 
+        ordered_main = [t for t in _norm(query).split()
+                        if t not in _STOP]
+        main_tokens = set(ordered_main)
         best = None
         checked = 0
         for hit in hits:
@@ -139,19 +149,16 @@ class OpenFoodFactsSource:
             seq_ratio = SequenceMatcher(
                 None, _norm(query), _norm(full_name)).ratio()
 
-            # Portao: o primeiro token da busca (o produto em si, ex.
-            # "nescau", "bolo") precisa constar no nome do hit; alternativa
-            # e sobreposicao alta de tokens. Evita casar so pela marca
-            # (ex. "Nescau 2.0" -> "Licuado Nestle").
-            ordered_main = [t for t in _norm(query).split()
-                            if t not in _STOP]
+            # Portao: se o primeiro token da busca eh distintivo (ex.
+            # "nescau"), ele precisa constar no nome; palavras genericas
+            # ("bolo", "biscoito"...) exigem sobreposicao alta de tokens
+            # principais (evita "Bolo de cookies" -> "Bolo de coco")
             fn_tokens = set(_norm(full_name).split())
             first_ok = bool(ordered_main) \
+                and ordered_main[0] not in _GENERIC \
                 and ordered_main[0] in fn_tokens
-            overlap = max(
-                len(q_tokens & set(n_tokens)),
-                len(q_tokens & fn_tokens),
-            ) / max(1, len(q_tokens)) if q_tokens else 0
+            overlap = (len(main_tokens & fn_tokens)
+                       / max(1, len(main_tokens)))
             if not (first_ok or overlap >= 0.40):
                 continue
 
