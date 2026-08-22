@@ -1,175 +1,153 @@
-"""
-Fonte Open Food Facts - rotulos reais de produtos industrializados.
+"""Fonte Open Food Facts - rotulos reais de produtos industrializados.
 
-API publica e gratuita (sem chave). Prioridade sobre USDA/IA para
-produtos de marca, pois traz o valor do ROTULO REAL e nao estimativas.
-
-Politica de uso: maximo ~1 request/segundo com User-Agent identificado.
-Docs: https://openfoodfacts.github.io/openfoodfacts-python/
+Usa o Search API oficial (search.openfoodfacts.org), filtrando produtos
+do Brasil e priorizando os mais populares/completos.
 """
 import logging
 import re
 import time
-import unicodedata
-from typing import Optional
 
 import requests
-from rapidfuzz import fuzz
 
 logger = logging.getLogger(__name__)
 
-# Mapa: campo da plataforma <- chaves possiveis no nutriments do OFF
-# (valores de mineral/vitamina podem vir em g, mg ou mcg conforme registro)
-_NUTRIENT_MAP = {
-    "valorEnergetico429": ["energy-kcal_100g"],
+SEARCH_URL = "https://search.openfoodfacts.org/search"
+USER_AGENT = ("NutriAssistent/1.2 "
+              "(https://github.com/rdot120; contato@qualihouse.com.br)")
+
+# Campos OF -> plataforma
+_NUTRI_MAP = {
+    "valorEnergetico429": ["energy-kcal_100g", "energy_100g"],  # kcal
     "carboidratos429": ["carbohydrates_100g"],
     "acucaresTotais429": ["sugars_100g"],
-    "acucaresAdicionados": ["added-sugars_100g"],
     "proteinas429": ["proteins_100g"],
     "gordurasTotais429": ["fat_100g"],
     "gordurasSaturadas429": ["saturated-fat_100g"],
-    "gordurasTrans429": ["trans-fat_100g"],
     "fibraAlimentar429": ["fiber_100g"],
-    "colesterol": ["cholesterol_100g"],          # mg
-    "sodio429": ["sodium_100g"],                 # g -> mg (x1000)
-    "calcio": ["calcium_100g"],                  # mg (as vezes g)
-    "ferro": ["iron_100g"],                      # mg
-    "magnesio": ["magnesium_100g"],              # mg
-    "potassio": ["potassium_100g"],              # mg
-    "zinco": ["zinc_100g"],                      # mg
-    "vitaminaC": ["vitamin-c_100g"],             # mg
+    "sodio429": ["sodium_100g"],  # g -> mg
 }
 
-_MG_MINERALS = ("calcio", "ferro", "magnesio", "potassio", "zinco",
-                "sodio429")
 
-
-def _strip_accents(text: str) -> str:
-    text = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in text if not unicodedata.combining(c))
+def _norm(texto: str) -> str:
+    """Normaliza para comparacao de nomes."""
+    t = texto.lower().strip()
+    t = re.sub(r"[áàâãä]", "a", t)
+    t = re.sub(r"[éèêë]", "e", t)
+    t = re.sub(r"[íìîï]", "i", t)
+    t = re.sub(r"[óòôõö]", "o", t)
+    t = re.sub(r"[úùûü]", "u", t)
+    t = re.sub(r"[ç]", "c", t)
+    return re.sub(r"[^a-z0-9 ]", " ", t)
 
 
 class OpenFoodFactsSource:
-    """Busca valores nutricionais de rotulo em produtos do OFF."""
-
-    name = "off"
-    BASE = "https://world.openfoodfacts.org"
-    MIN_INTERVAL = 1.05  # cortesia com o servidor publico
+    """Busca rotulos reais no Open Food Facts."""
 
     def __init__(self, timeout: int = 15):
         self.timeout = timeout
-        self._last_request = 0.0
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "NutriAssistent/1.2 "
-                          "(automacao nutricional; github.com/rdot120)"
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
         })
-
-    def is_available(self) -> bool:
-        return True
+        self._last_request = 0.0
 
     def _throttle(self):
         elapsed = time.time() - self._last_request
-        if elapsed < self.MIN_INTERVAL:
-            time.sleep(self.MIN_INTERVAL - elapsed)
+        if elapsed < 1.05:
+            time.sleep(1.05 - elapsed)
         self._last_request = time.time()
 
-    def search_product(self, name: str) -> Optional[dict]:
-        """Busca o melhor produto correspondente ao nome.
-
-        Retorna {"fields": {...}, "product_name": ..., "brands": ...,
-                 "score": float} ou None.
-        """
-        self._throttle()
+    def search_product(self, query: str) -> dict | None:
+        """Busca um produto e retorna {"fields", "product_name", "brands",
+        "score"} ou None se nada confiavel for encontrado."""
         try:
+            self._throttle()
             resp = self.session.get(
-                f"{self.BASE}/cgi/search.pl",
+                SEARCH_URL,
                 params={
-                    "search_terms": name,
-                    "search_simple": 1,
-                    "action": "process",
-                    "json": 1,
-                    "page_size": 10,
-                    "fields": "product_name,product_name_pt,brand_owner,"
-                              "brands,nutriments",
+                    "q": query,
+                    "page_size": 8,
+                    "countries_tags": "brazil",
+                    "sort_by": "popularity_key",
                 },
                 timeout=self.timeout,
             )
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            logger.debug(f"OFF erro para '{name}': {e}")
+            if resp.status_code != 200:
+                logger.debug("OF status %s para '%s'",
+                             resp.status_code, query)
+                return None
+            hits = resp.json().get("hits") or []
+        except Exception as exc:
+            logger.warning("OF erro '%s': %s", query, exc)
             return None
 
-        products = data.get("products") or []
+        q_tokens = set(_norm(query).split())
+        # Token principal (marca/produto) precisa constar no nome do hit
+        _STOP = {"em", "de", "da", "do", "com", "para", "e"}
+        main_tokens = q_tokens - _STOP
         best = None
-        best_score = 0.0
-
-        query_norm = _strip_accents(name.lower())
-        for prod in products:
-            pname = (prod.get("product_name_pt")
-                     or prod.get("product_name") or "").strip()
-            if not pname or not prod.get("nutriments"):
+        for hit in hits:
+            name = (hit.get("product_name") or "").strip()
+            if not name or len(name) < 3:
+                continue
+            fields = self._extract_fields(hit.get("nutriments") or {})
+            if len(fields) < 6 or "valorEnergetico429" not in fields:
                 continue
 
-            candidate = _strip_accents(pname.lower())
-            # token_set_ratio tolera ordem e palavras extras da marca
-            score = fuzz.token_set_ratio(query_norm, candidate)
-            if score > best_score:
-                fields = self._map_nutrients(prod["nutriments"])
-                if len(fields) >= 6:  # rotulo util precisa de dados minimos
-                    best_score = score
-                    best = {
-                        "fields": fields,
-                        "product_name": pname,
-                        "brands": prod.get("brands") or "",
-                        "score": score,
-                    }
+            n_tokens = set(_norm(name).split())
+            if main_tokens and not (main_tokens & n_tokens):
+                continue
 
-        if best and best_score >= 70:
-            best["score"] = best_score
+            # Score: completude + quantidade de campos + sobreposicao de nome
+            overlap = (len(q_tokens & n_tokens)
+                       / max(1, len(q_tokens))) if q_tokens else 0
+            score = (min(1.0, hit.get("completeness") or 0) * 30
+                     + min(1.0, len(fields) / 8) * 25
+                     + overlap * 45)
+
+            if not best or score > best["score"]:
+                brands = ", ".join(hit.get("brands") or [])[:60]
+                best = {
+                    "product_name": name,
+                    "brands": brands,
+                    "fields": fields,
+                    "score": round(min(score, 100.0), 1),
+                }
+
+        if best and best["score"] >= 55:
             return best
         return None
 
-    def _map_nutrients(self, nutriments: dict) -> dict:
-        """Converte nutriments OFF -> campos RDC 429 da plataforma."""
-        fields: dict[str, str] = {}
-        for target, keys in _NUTRIENT_MAP.items():
-            for k in keys:
-                val = nutriments.get(k)
-                if not isinstance(val, (int, float)) or val <= 0:
-                    continue
-                num = float(val)
-                if target == "sodio429":
-                    num *= 1000.0  # OFF guarda sodio em g
-                elif target in _MG_MINERALS and num < 5:
-                    num *= 1000.0  # veio em g, converte p/ mg
-                if target == "valorEnergetico429":
-                    num = round(num)
-                else:
-                    num = round(num, 2)
-                fields[target] = (
-                    f"{int(num)},0" if num == int(num)
-                    else f"{num}".replace(".", ",")
-                )
-                break
+    def _extract_fields(self, nutriments: dict) -> dict:
+        """Converte nutriments do OF para campos da plataforma."""
+        fields = {}
+        for plat_key, of_keys in _NUTRI_MAP.items():
+            value = None
+            for k in of_keys:
+                v = nutriments.get(k)
+                if isinstance(v, (int, float)) and v == v:  # nao-NaN
+                    value = float(v)
+                    break
+            if value is None:
+                continue
+            if plat_key == "valorEnergetico429" \
+                    and "energy-kcal_100g" not in nutriments:
+                value = value / 4.184  # veio em kJ
+            if plat_key == "sodio429":
+                value = value * 1000.0  # g -> mg
+            fields[plat_key] = f"{value:.1f}".rstrip("0").rstrip(".")
         return fields
 
     def search_batch(self, names: list[str],
-                     gui_callback=None) -> dict[str, Optional[dict]]:
-        """Busca varios nomes sequencialmente (com throttle).
-
-        Retorna {nome.lower().strip(): resultado|None}.
-        """
-        results: dict[str, Optional[dict]] = {}
-        found = 0
-        for i, name in enumerate(names, 1):
+                     gui_callback=None) -> dict[str, dict]:
+        """Busca varios produtos. Retorna {nome_normalizado: resultado}."""
+        out = {}
+        total = len(names)
+        for i, name in enumerate(names, start=1):
             res = self.search_product(name)
-            results[name.lower().strip()] = res
+            if gui_callback and i % 5 == 0:
+                gui_callback(f"  Rotulos OF: {i}/{total}...")
             if res:
-                found += 1
-            if i % 25 == 0 and gui_callback:
-                gui_callback(f"  Rotulos OF: {i}/{len(names)} buscados, "
-                             f"{found} encontrados")
-        logger.info(f"OFF: {found}/{len(names)} produtos com rotulo util")
-        return results
+                out[name.lower().strip()] = res
+        return out
