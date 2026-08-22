@@ -458,6 +458,7 @@ class OllamaProvider(AIProvider):
         # Modelos locais pequenos: lotes menores e mais tempo
         self.preferred_batch_size = 8
         self.timeout = max(self.timeout, 120)
+        self.local = True
 
     def _call_api(self, prompt: str) -> str:
         options = {
@@ -539,7 +540,9 @@ class GroqProvider(AIProvider):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=2048,
+            # Lote de 15 alimentos com ~30 campos precisa de bastante
+            # espaco de saida; 2048 truncava o JSON no meio
+            max_tokens=16384,
         )
         return response.choices[0].message.content or ""
 
@@ -629,6 +632,21 @@ class NutritionAIFinder:
 
         for provider in self.providers:
             if not provider.is_available() or not pending:
+                continue
+
+            # Modelo local e lento demais para cargas grandes: se a
+            # cota dos provedores online acabou, nao travar o app por horas
+            if getattr(provider, "local", False) and len(pending) > 60:
+                logger.warning(
+                    f"{len(pending)} alimentos pendentes - pulando "
+                    f"modelo local (lento). Tente novamente quando a "
+                    f"cota online renovar."
+                )
+                if gui_callback:
+                    gui_callback(
+                        "  IA: cota esgotada e carga grande demais para o "
+                        "modelo local - tente recarregar mais tarde"
+                    )
                 continue
 
             still_pending = []
