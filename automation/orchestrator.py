@@ -147,6 +147,26 @@ class Orchestrator:
             f"{len(checked)} conferidos) = {pendentes} pendentes; "
             f"{marked} marcados por nome"
         )
+
+        # Arquivar valores dos alimentos conferidos pela nutricionista
+        # (uma vez por alimento; viram prioridade maxima nas cargas)
+        if checked:
+            to_archive = [n for n in sorted(checked)
+                          if not self.db.has_validated_value(n)]
+            if to_archive:
+                limit = to_archive[:60]
+                logger.info(f"Fase 1b: arquivando valores conferidos "
+                            f"({len(limit)} novos de {len(to_archive)})")
+                archived = 0
+                for i, name in enumerate(limit, start=1):
+                    if self._capture_validated_values(name):
+                        archived += 1
+                    if i % 5 == 0:
+                        logger.info(f"  Arquivamento: {i}/{len(limit)}...")
+                logger.info(f"Fase 1b: {archived} alimentos arquivados "
+                            f"(restam {max(0, len(to_archive) - len(limit))} "
+                            f"para proximas cargas)")
+
         return {
             "counts": counts,
             "pendentes": pendentes,
@@ -220,13 +240,19 @@ class Orchestrator:
         processed = []
         no_match_foods = []
 
-        # Fase 3a: valores validados manualmente tem prioridade maxima -
+        # Fase 3a: valores validados tem prioridade maxima -
+        # entradas manuais e valores capturados de cards conferidos
         # sobrepoe qualquer fonte automatica
         manual_entries = {}
+        validated_entries = {}
         try:
             manual_entries = self.db.get_all_manual_entries()
+            validated_entries = self.db.get_all_validated_entries()
         except Exception as exc:
-            logger.warning(f"Não foi possivel carregar entradas manuais: {exc}")
+            logger.warning(f"Não foi possivel carregar entradas validadas: {exc}")
+        if validated_entries:
+            logger.info(f"Fase 3a: {len(validated_entries)} alimentos com "
+                        f"valores arquivados da plataforma")
 
         for food in platform_foods:
             name = food["name"]
@@ -258,6 +284,25 @@ class Orchestrator:
                 pf.status = "matched"
                 logger.info(f"  Validado pelo usuario: {name} "
                             f"({len(pf.fields_to_fill)} campos)")
+                processed.append(pf)
+                if on_item:
+                    on_item(pf)
+                continue
+
+            if name in validated_entries and validated_entries[name]:
+                pf = ProcessedFood(platform_name=name)
+                pf.fields_to_fill = dict(validated_entries[name])
+                pf.match = MatchResult(
+                    platform_name=name,
+                    tbca_name=f"[Validado no site] {name}",
+                    tbca_code="PLATFORM",
+                    confidence=98.0,
+                    match_method="platform",
+                    tbca_nutrients={},
+                )
+                pf.status = "matched"
+                logger.info(f"  Validado na plataforma: {name} "
+                            f"({len(pf.fields_to_fill)} campos arquivados)")
                 processed.append(pf)
                 if on_item:
                     on_item(pf)
@@ -344,7 +389,7 @@ class Orchestrator:
             eligible = [
                 p for p in processed
                 if p.status == "matched" and p.match
-                and p.match.match_method != "manual"
+                and p.match.match_method not in ("manual", "platform")
                 and p.fields_to_fill
             ]
             random.shuffle(eligible)
@@ -974,6 +1019,43 @@ class Orchestrator:
         if gui_callback:
             gui_callback(f"  Verificacao: {verified + skipped_obvious} ok, "
                         f"{flagged} suspeitos para revisao")
+
+    def _capture_validated_values(self, food_name: str) -> bool:
+        """Arquiva os valores de um alimento ja conferido na plataforma.
+
+        Abre o dialog, le os campos, salva no banco validated_values e
+        fecha SEM alterar nada. So captura uma vez por alimento.
+        Retorna True se os valores foram arquivados agora ou antes.
+        """
+        if not self.platform:
+            return False
+        if self.db.has_validated_value(food_name):
+            return True
+
+        try:
+            if not self.platform.open_edit_dialog(food_name):
+                logger.warning(f"  Arquivo: nao abriu dialog "
+                               f"({food_name})")
+                return False
+            time.sleep(0.5)
+            data = self.platform.get_nutritional_data()
+            self.platform.close_edit_dialog()
+
+            if len(data) >= 3:
+                self.db.save_validated_value(food_name, data)
+                logger.info(f"  ARQUIVADO (conferido): {food_name} "
+                            f"({len(data)} campos)")
+                return True
+            logger.debug(f"  Arquivo: {food_name} com poucos campos "
+                         f"({len(data)}) - ignorado")
+            return False
+        except Exception as exc:
+            logger.warning(f"  Erro ao arquivar {food_name}: {exc}")
+            try:
+                self.platform.close_edit_dialog()
+            except Exception:
+                pass
+            return False
 
     def step4_fill_and_save(self, processed_foods: list[ProcessedFood],
                             dry_run: bool = True, max_items: int = None):
