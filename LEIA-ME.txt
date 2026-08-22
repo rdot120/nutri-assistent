@@ -1,0 +1,93 @@
+# Nutri Assistent - Codigo Fonte
+
+## Estrutura do Projeto
+
+```
+NutriAssistent/
+├── automation/
+│   ├── orchestrator.py    # Pipeline principal
+│   └── interactive.py     # Assistente interativo
+├── browser/
+│   ├── session.py         # Gerenciamento de sessao
+│   └── platform.py        # Interacao com plataforma
+├── config/
+│   ├── settings.py        # Configuracoes
+│   └── .env               # Credenciais (NAO COMMITAR)
+├── gui/
+│   ├── app.py             # Aplicacao principal
+│   ├── run.py             # Ponto de entrada
+│   ├── theme.py           # Cores e fontes
+│   ├── widgets.py         # Componentes reutilizaveis
+│   └── pages/
+│       ├── dashboard.py   # Painel principal
+│       ├── search.py      # Busca de alimentos
+│       ├── settings.py    # Configuracoes
+│       └── ...
+├── nutrition/
+│   ├── tbca.py            # Scraper TBCA
+│   ├── usda.py            # API USDA
+│   ├── matcher.py         # Matching de alimentos
+│   └── ai_provider.py     # Provedores IA (Groq, Ollama)
+├── storage/
+│   ├── db.py              # Banco de dados SQLite
+│   ├── session.py         # Persistencia de sessao
+│   └── performance.py     # Metricas de desempenho
+├── tests/
+│   └── test_all.py        # Testes unitarios
+├── dist/
+│   └── NutriAssistent.exe # Executavel
+├── extra/
+│   ├── icon.ico           # Icone do programa
+│   └── logo.png           # Logo
+├── build.bat              # Gerar executavel
+├── setup.bat              # Instalador
+├── install.py             # Instalador Python
+└── requirements.txt       # Dependencias
+```
+
+## Para Rodar no Codigo Fonte
+
+### 1. Instalar Python
+- Baixe: https://www.python.org/downloads/
+- Instale marcando "Add Python to PATH"
+
+### 2. Instalar Dependencias
+```bash
+pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+### 3. Rodar Programa
+```bash
+python gui/run.py
+```
+
+### 4. Gerar Executavel
+```bash
+build.bat
+```
+
+## Configuracao
+
+### Chave Groq (IA Gratuita)
+1. Acesse: https://console.groq.com
+2. Crie uma conta
+3. Va em API Keys > Create API Key
+4. Cole em Configuracoes do programa
+
+### Credenciais da Plataforma
+- Usuario: `evelyn`
+- Senha: `123mudar`
+
+## Comandos Uteis
+
+```bash
+# Rodar testes
+python -m pytest tests/test_all.py -v
+
+# Gerar executavel
+build.bat
+
+# Limpar builds anteriores
+rmdir /s /q build dist
+```

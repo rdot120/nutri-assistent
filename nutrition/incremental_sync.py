@@ -192,58 +192,21 @@ class IncrementalSync:
         return result
 
     def sync_usda(self, since: float = 0) -> SyncResult:
-        """Sincroniza USDA (usa endpoint de mudancas)."""
+        """Sincroniza USDA (endpoint de mudancas indisponivel na API)."""
         result = SyncResult(source="usda", sync_type="incremental",
                             started_at=time.time())
         state = self.get_state("usda")
 
-        if since == 0:
-            since = state.last_sync_at
-
-        try:
-            if since > 0:
-                changes = self.usda._request("/food/changes", {
-                    "since": int(since),
-                })
-            else:
-                changes = {"changes": []}
-
-            if changes and "changes" in changes:
-                food_changes = changes["changes"]
-                result.total_items = len(food_changes)
-
-                for change in food_changes:
-                    change_type = change.get("changeType", "")
-                    fdc_id = str(change.get("fdcId", ""))
-                    desc = change.get("description", "")
-
-                    if change_type == "ADD":
-                        result.new_items += 1
-                        result.details.append({
-                            "code": fdc_id, "name": desc, "type": "new"
-                        })
-                    elif change_type == "UPDATE":
-                        result.updated_items += 1
-                        result.details.append({
-                            "code": fdc_id, "name": desc, "type": "updated"
-                        })
-
-            state.last_sync_at = time.time()
-            state.new_since_last = result.new_items
-            state.updated_since_last = result.updated_items
-            self._save_state(state)
-
-            result.message = (
-                f"USDA: {result.new_items} novos, "
-                f"{result.updated_items} atualizados"
-            )
-            result.finished_at = time.time()
-
-        except Exception as e:
-            result.errors += 1
-            result.message = f"Erro USDA: {e}"
-            result.finished_at = time.time()
-            logger.error("Erro na sincronizacao USDA: %s", e)
+        # A API publica do USDA nao expoe endpoint de mudancas;
+        # /food/changes responde 400. A busca (/foods/search)
+        # permanece funcional e nao depende desta sincronizacao.
+        result.message = (
+            "USDA: sincronizacao de mudancas indisponivel "
+            "(endpoint nao exposto pela API)"
+        )
+        state.last_sync_at = time.time()
+        self._save_state(state)
+        result.finished_at = time.time()
 
         self._save_history(result)
         return result

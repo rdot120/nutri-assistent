@@ -45,6 +45,7 @@ data/session.json
 data/nutri_auto.db
 data/usda_cache.db
 data/tbca_cache.db
+data/browser_profile/
 
 # Builds (cada PC gera o seu)
 dist/

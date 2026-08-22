@@ -161,50 +161,14 @@ class UpdateChecker:
         self._notify("checking", "USDA")
         result = UpdateResult(source="usda", checked_at=time.time())
 
-        try:
-            # USDA tem endpoint de mudancas recentes
-            # GET /food/changes?since={timestamp}
-            changes = self.usda._request("/food/changes", {
-                "since": int(self._last_check.get("usda", 0)),
-            })
-
-            if changes and "changes" in changes:
-                food_changes = changes["changes"]
-                result.total_items = len(food_changes)
-
-                for change in food_changes:
-                    change_type = change.get("changeType", "")
-                    fdc_id = str(change.get("fdcId", ""))
-                    desc = change.get("description", "")
-
-                    if change_type == "ADD":
-                        result.new_items += 1
-                        result.details.append({
-                            "code": fdc_id,
-                            "name": desc,
-                            "type": "new",
-                        })
-                    elif change_type == "UPDATE":
-                        result.updated_items += 1
-                        result.details.append({
-                            "code": fdc_id,
-                            "name": desc,
-                            "type": "updated",
-                        })
-
-                result.message = (
-                    f"USDA: {result.new_items} novos, "
-                    f"{result.updated_items} atualizados"
-                )
-            else:
-                result.message = "USDA: sem atualizacoes"
-
-            self._last_check["usda"] = time.time()
-
-        except Exception as e:
-            result.errors += 1
-            result.message = f"USDA erro: {e}"
-            logger.error("Erro ao verificar USDA: %s", e)
+        # A API publica do USDA nao expoe endpoint de mudancas;
+        # /food/changes responde 400. A busca (/foods/search)
+        # permanece funcional e nao depende desta verificacao.
+        result.message = (
+            "USDA: verificacao de mudancas indisponivel "
+            "(endpoint nao exposto pela API)"
+        )
+        self._last_check["usda"] = time.time()
 
         self._notify("result", result)
 
