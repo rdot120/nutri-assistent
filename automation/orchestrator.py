@@ -218,6 +218,14 @@ class Orchestrator:
         processed = []
         no_match_foods = []
 
+        # Fase 3a: valores validados manualmente tem prioridade maxima -
+        # sobrepoe qualquer fonte automatica
+        manual_entries = {}
+        try:
+            manual_entries = self.db.get_all_manual_entries()
+        except Exception as exc:
+            logger.warning(f"Não foi possivel carregar entradas manuais: {exc}")
+
         for food in platform_foods:
             name = food["name"]
 
@@ -229,6 +237,25 @@ class Orchestrator:
                     "Ja salvo na plataforma" if food["prefilled"] == "salvo"
                     else "Ja conferido pela nutricionista"
                 )
+                processed.append(pf)
+                if on_item:
+                    on_item(pf)
+                continue
+
+            if name in manual_entries and manual_entries[name]:
+                pf = ProcessedFood(platform_name=name)
+                pf.fields_to_fill = dict(manual_entries[name])
+                pf.match = MatchResult(
+                    platform_name=name,
+                    tbca_name=f"[Validado] {name}",
+                    tbca_code="MANUAL",
+                    confidence=99.0,
+                    match_method="manual",
+                    tbca_nutrients={},
+                )
+                pf.status = "matched"
+                logger.info(f"  Validado pelo usuario: {name} "
+                            f"({len(pf.fields_to_fill)} campos)")
                 processed.append(pf)
                 if on_item:
                     on_item(pf)
@@ -294,6 +321,7 @@ class Orchestrator:
                             f"itens de IA com baixa confianca")
                 self._self_check_suspicious(suspicious, gui_callback=gui_callback)
 
+        return processed
         return processed
 
     def _ensure_nutrients(self, pf: ProcessedFood) -> bool:
