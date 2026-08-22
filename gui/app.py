@@ -329,6 +329,21 @@ class App(ctk.CTk):
                     f"Coletados {len(platform_foods)} alimentos"
                 ))
 
+                # Fase 1b: filtros da barra lateral (verde/azul ja concluidos)
+                self.after(0, lambda: self._log(
+                    "Fase 1b: Lendo filtros da barra lateral..."
+                ))
+                info = self._run_on_browser_thread(
+                    self.orchestrator.step1b_mark_prefilled, platform_foods
+                )
+                c = info["counts"]
+                self.after(0, lambda: self._log(
+                    f"Pendentes: {info['pendentes']} = {c.get('total', 0)} - "
+                    f"({c.get('associados', 0)} salvos + "
+                    f"{c.get('checados', 0)} conferidos); "
+                    f"{info['marked']} marcados como preenchidos"
+                ))
+
                 # Sincronizar com sessao anterior
                 saved = self.session_mgr.load()
                 if saved and saved.get("processed_raw"):
@@ -370,6 +385,8 @@ class App(ctk.CTk):
                 processed = self._run_on_browser_thread(
                     self.orchestrator.step3b_check_card_status, processed
                 )
+
+                processed = self.orchestrator.apply_prefilled_to_processed(processed)
 
                 skipped = sum(1 for p in processed if p.status == "skipped")
                 if skipped > 0:
@@ -438,6 +455,14 @@ class App(ctk.CTk):
                     status = "Preenchido"
                 elif pf.skip_reason == "reviewed":
                     match_name = pf.suggestion[:35] if pf.suggestion else ""
+                    source = "Plataforma"
+                    status = "Conferido"
+                elif pf.skip_reason == "prefilled_salvo":
+                    match_name = "(salvo na plataforma)"
+                    source = "Plataforma"
+                    status = "Salvo"
+                elif pf.skip_reason == "prefilled_conferido":
+                    match_name = "(conferido na plataforma)"
                     source = "Plataforma"
                     status = "Conferido"
                 else:

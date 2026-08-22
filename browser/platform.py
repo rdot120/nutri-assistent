@@ -12,6 +12,7 @@ Fluxo de edição:
 import time
 import logging
 import json
+import re
 from typing import Optional
 from playwright.sync_api import Page
 
@@ -196,6 +197,97 @@ class PlatformInteraction:
         """)
         logger.info(f"Total de nutricionais: {len(foods)}")
         return foods
+
+    def get_card_names(self) -> list[str]:
+        """Nomes de todos os cards presentes no DOM (sem precisar rolar)."""
+        return self.page.evaluate("""
+            () => {
+                const cards = document.querySelectorAll('[data-slot="popover-trigger"]');
+                return Array.from(cards)
+                    .filter(c => c.tagName === 'DIV' && c.textContent.trim().length > 2)
+                    .map(c => c.textContent.trim());
+            }
+        """)
+
+    def _scroll_grid_top(self):
+        """Rola a janela para o topo (a barra de filtros nao e fixa)."""
+        self.page.evaluate("() => window.scrollTo(0, 0)")
+        time.sleep(0.4)
+
+    def _click_filter(self, pattern: str) -> int:
+        """
+        Clica em um filtro da barra lateral e retorna o contador do botao.
+
+        Os filtros sao tabs Radix e exigem clique de mouse real
+        (eventos de ponteiro), entao localizamos o botao por texto,
+        marcamos com um atributo temporario e clicamos via Playwright.
+        A barra rola junto com o conteudo, entao volta ao topo antes.
+        """
+        self._scroll_grid_top()
+        token = f"ppf-{int(time.time() * 1000)}"
+        found = self.page.evaluate(
+            """
+            (args) => {
+                const rx = new RegExp(args.pattern);
+                const btns = Array.from(document.querySelectorAll('button'));
+                const target = btns.find(
+                    b => rx.test((b.textContent || '').trim())
+                );
+                if (!target) return null;
+                const m = (target.textContent || '').match(/(\\d+)/);
+                target.setAttribute('data-pp-filter', args.token);
+                return { count: m ? parseInt(m[1], 10) : null };
+            }
+            """,
+            {"pattern": pattern, "token": token},
+        )
+        if not found:
+            logger.warning(f"Filtro nao encontrado: {pattern}")
+            return 0
+
+        self.page.locator(f'[data-pp-filter="{token}"]').click()
+        time.sleep(1.2)
+        self.page.evaluate(
+            "(t) => { const el = document.querySelector("
+            "`[data-pp-filter='${t}']`);"
+            " if (el) el.removeAttribute('data-pp-filter'); }",
+            token,
+        )
+        return found.get("count") or 0
+
+    def capture_filter_sets(self) -> dict:
+        """
+        Captura os conjuntos de cards por filtro da barra lateral.
+
+        A barra lateral rola junto com o grid, entao cada clique exige
+        voltar ao topo da grade. No fim restaura o filtro "Todos".
+
+        Retorna:
+        {
+          "counts": {"total": n, "associados": n, "checados": n},
+          "names": {"total": [...], "associados": [...], "checados": [...]},
+        }
+        """
+        filters = [
+            ("total", r"^Todos\s*\d+$"),
+            ("associados", r"^Associado\(s\)\s*\d+$"),
+            ("checados", r"^Checado por nutricionista\s*\d+$"),
+        ]
+
+        counts = {}
+        names = {}
+        for key, pattern in filters:
+            counts[key] = self._click_filter(pattern)
+            names[key] = self.get_card_names()
+            logger.info(
+                f"Filtro {key}: contador={counts[key]}, "
+                f"cards no DOM={len(names[key])}"
+            )
+
+        # Restaurar filtro "Todos" e posicao do scroll
+        self._click_filter(r"^Todos\s*\d+$")
+
+        return {"counts": counts, "names": names}
 
     def search_food(self, query: str) -> int:
         """Busca nutricional por nome. Retorna número de resultados."""

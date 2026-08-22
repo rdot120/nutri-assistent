@@ -103,6 +103,73 @@ class Orchestrator:
         logger.info(f"Coletados {len(foods)} nutricionais da plataforma")
         return foods
 
+    def step1b_mark_prefilled(self, platform_foods: list[dict]) -> dict:
+        """
+        Fase 1b: Le os filtros da barra lateral da plataforma e marca
+        itens ja concluidos (salvos/conferidos) ANTES do matching.
+
+        Formula: pendentes = total - (associados + checados)
+          - "Associado(s)"      = salvos, 100% concluidos (verde)
+          - "Checado por nutricionista" = conferidos, nao salvos (azul)
+        """
+        logger.info("Fase 1b: Lendo filtros da barra lateral")
+        sets = self.platform.capture_filter_sets()
+        counts = sets["counts"]
+        names = sets["names"]
+
+        saved = set(names.get("associados", []))
+        checked = set(names.get("checados", []))
+        total = counts.get("total", len(names.get("total", [])))
+
+        # Formula usa os contadores exibidos na barra lateral
+        pendentes = total - (
+            counts.get("associados", len(saved))
+            + counts.get("checados", len(checked))
+        )
+
+        self.prefilled_tags = {}
+        for food in platform_foods:
+            name = food["name"]
+            if name in saved:
+                food["prefilled"] = "salvo"
+                self.prefilled_tags[name] = "salvo"
+            elif name in checked:
+                food["prefilled"] = "conferido"
+                self.prefilled_tags[name] = "conferido"
+
+        marked = len(self.prefilled_tags)
+        logger.info(
+            f"Fase 1b: {total} totais - ({len(saved)} salvos + "
+            f"{len(checked)} conferidos) = {pendentes} pendentes; "
+            f"{marked} marcados por nome"
+        )
+        return {
+            "counts": counts,
+            "pendentes": pendentes,
+            "marked": marked,
+        }
+
+    def apply_prefilled_to_processed(
+        self, processed: list[ProcessedFood]
+    ) -> list[ProcessedFood]:
+        """Aplica as marcacoes da fase 1b a lista processada."""
+        tags = getattr(self, "prefilled_tags", {}) or {}
+        if not tags:
+            return processed
+
+        for pf in processed:
+            kind = tags.get(pf.platform_name)
+            if not kind or pf.status in ("filled", "saved"):
+                continue
+            pf.status = "skipped"
+            pf.skip_reason = f"prefilled_{kind}"
+            pf.suggestion = (
+                "Ja salvo na plataforma" if kind == "salvo"
+                else "Ja conferido pela nutricionista"
+            )
+
+        return processed
+
     def step2_build_tbca_index(self, search_terms: list[str] = None):
         """Fase 2: Constroi indice TBCA (busca listing ou usa cache)."""
         logger.info("Fase 2: Construindo indice TBCA")
@@ -151,6 +218,18 @@ class Orchestrator:
 
         for food in platform_foods:
             name = food["name"]
+
+            if food.get("prefilled"):
+                pf = ProcessedFood(platform_name=name)
+                pf.status = "skipped"
+                pf.skip_reason = f"prefilled_{food['prefilled']}"
+                pf.suggestion = (
+                    "Ja salvo na plataforma" if food["prefilled"] == "salvo"
+                    else "Ja conferido pela nutricionista"
+                )
+                processed.append(pf)
+                continue
+
             match = matches.get(name)
             pf = ProcessedFood(platform_name=name, match=match)
             if match:
