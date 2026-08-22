@@ -463,7 +463,13 @@ class App(ctk.CTk):
             confidence = pf.match.confidence
             method = pf.match.match_method or ""
             if method.startswith("ai_"):
-                source = f"IA ({method.replace('ai_', '')})"
+                prov = method[len("ai_"):].replace("_rec", "")
+                if method.endswith("_rec"):
+                    source = f"IA ({prov}:receita)"
+                else:
+                    source = f"IA ({prov})"
+            elif method == "off":
+                source = "Rotulo OF"
             elif method == "usda":
                 source = "USDA"
             else:
@@ -575,9 +581,11 @@ class App(ctk.CTk):
 
         tbca_matches = sum(
             1 for p in processed if p.match
-            and (p.match.match_method or "") not in ("usda", "")
+            and (p.match.match_method or "") not in ("usda", "off", "")
             and not (p.match.match_method or "").startswith("ai_")
         )
+        off_matches = sum(1 for p in processed
+                          if p.match and p.match.match_method == "off")
         usda_matches = sum(1 for p in processed
                            if p.match
                            and p.match.match_method == "usda")
@@ -585,7 +593,7 @@ class App(ctk.CTk):
                          if p.match and (p.match.match_method or "")
                          .startswith("ai_"))
         dashboard.update_sources(tbca=tbca_matches, usda=usda_matches,
-                                 ia=ia_matches)
+                                 ia=ia_matches, off=off_matches)
 
         manual_entries = self.db.get_all_manual_entries()
 

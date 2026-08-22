@@ -63,6 +63,16 @@ def _to_float(value) -> float | None:
         return None
 
 
+# Alias publico para uso por outros modulos
+to_float = _to_float
+
+
+def sanity_score(fields: dict) -> float:
+    """Atalho: retorna apenas o score de sanidade (0-1)."""
+    score, _ = validate_fields(fields)
+    return score
+
+
 def _f(fields: dict, key: str) -> float | None:
     return _to_float(fields.get(key))
 

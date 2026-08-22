@@ -16,6 +16,8 @@ from storage.db import Database
 from nutrition.tbca import TBCAScraper, TBCAFood, TBCA_TO_PLATFORM
 from nutrition.matcher import FoodMatcher, MatchResult
 from nutrition.usda import USDAScraper, USDA_TO_PLATFORM
+from nutrition.openfoodfacts import OpenFoodFactsSource
+from nutrition.sanity import validate_fields, to_float, sanity_score
 from nutrition.ai_provider import NutritionAIFinder, VerificationResult, create_default_finder
 
 logger = logging.getLogger(__name__)
@@ -246,14 +248,23 @@ class Orchestrator:
         matched_count = sum(1 for p in processed if p.status == "matched")
         logger.info(f"Correspondencias TBCA: {matched_count}/{len(processed)}")
 
-        # Fase 3c: Buscar via USDA para alimentos sem match TBCA
+        # Fase 3b2: Rotulos reais do Open Food Facts (produtos industrializados)
+        still_unmatched = [p for p in processed if p.status == "no_match"]
+        if still_unmatched:
+            logger.info(f"Fase 3b2: Buscando rotulos OF para "
+                        f"{len(still_unmatched)} alimentos")
+            self._openfoodfacts_fallback(still_unmatched,
+                                         gui_callback=gui_callback,
+                                         on_item=on_item)
+
+        # Fase 3c: Buscar via USDA para alimentos sem match TBCA/OF
         still_unmatched = [p for p in processed if p.status == "no_match"]
         if still_unmatched and self.settings.usda.api_key:
             logger.info(f"Fase 3c: Buscando via USDA para {len(still_unmatched)} alimentos")
             self._usda_fallback(still_unmatched, gui_callback=gui_callback,
                                 on_item=on_item)
 
-        # Fase 3d: Buscar via IA para alimentos sem match TBCA/USDA
+        # Fase 3d: Buscar via IA para alimentos sem match anterior
         still_unmatched = [p for p in processed if p.status == "no_match"]
         if self.ai_finder and self.settings.ai.auto_fallback and still_unmatched:
             logger.info(f"Fase 3d: Buscando via IA para {len(still_unmatched)} alimentos")
@@ -269,6 +280,19 @@ class Orchestrator:
         if self.ai_finder and matched_foods:
             logger.info(f"Fase 3e: Verificando {len(matched_foods)} matches via IA")
             self._verify_matches(matched_foods, gui_callback=gui_callback)
+
+        # Fase 3f: Autoconsistencia - revalidar itens de IA com confianca baixa
+        if self.ai_finder:
+            suspicious = [
+                p for p in processed
+                if p.status == "matched" and p.match
+                and (p.match.match_method or "").startswith("ai_")
+                and p.match.confidence < 68
+            ]
+            if suspicious:
+                logger.info(f"Fase 3f: Autoconsistencia em {len(suspicious)} "
+                            f"itens de IA com baixa confianca")
+                self._self_check_suspicious(suspicious, gui_callback=gui_callback)
 
         return processed
 
@@ -468,6 +492,128 @@ class Orchestrator:
             self.tbca.to_cache(food)
             logger.info(f"  {len(food.nutrients)} nutrientes carregados")
 
+    # Confianca base por fonte (0-100)
+    _SOURCE_BASE = {
+        "tbca": 95,
+        "off": 85,
+        "usda": 80,
+    }
+    _AI_BASE = {"receita": 70, "tabela": 52}
+
+    def _openfoodfacts_fallback(self, no_match_foods: list[ProcessedFood],
+                                gui_callback=None, on_item=None):
+        """Busca rotulos reais no Open Food Facts (produtos industrializados)."""
+        if not hasattr(self, "_off_source"):
+            self._off_source = OpenFoodFactsSource()
+
+        names = [pf.platform_name for pf in no_match_foods]
+        if gui_callback:
+            gui_callback(f"  Rotulos OF: consultando {len(names)} produtos...")
+
+        results = self._off_source.search_batch(names, gui_callback=gui_callback)
+
+        off_count = 0
+        for pf in no_match_foods:
+            res = results.get(pf.platform_name.lower().strip())
+            if res:
+                fields = res["fields"]
+                completeness = min(1.0, len(fields) / 20.0)
+                conf = (self._SOURCE_BASE["off"]
+                        - 15.0 * (1.0 - sanity_score(fields))
+                        ) * (0.75 + 0.25 * completeness) \
+                    * (res["score"] / 100.0)
+                label = res["product_name"]
+                if res.get("brands"):
+                    label = f"{label} ({res['brands'][:24]})"
+                pf.match = MatchResult(
+                    platform_name=pf.platform_name,
+                    tbca_name=f"[OF] {label}",
+                    tbca_code="OFF",
+                    confidence=round(min(conf, 92.0), 1),
+                    match_method="off",
+                    tbca_nutrients={},
+                )
+                pf.fields_to_fill = fields
+                pf.status = "matched"
+                off_count += 1
+                logger.info(
+                    f"  OF: {pf.platform_name} -> {res['product_name']} "
+                    f"({pf.match.confidence:.0f}%, {len(fields)} campos)"
+                )
+            if on_item:
+                on_item(pf)
+
+        logger.info(f"OF: {off_count}/{len(no_match_foods)} com rotulo util")
+        if gui_callback:
+            gui_callback(f"  Rotulos OF: {off_count}/{len(no_match_foods)} encontrados")
+
+    def _sanity_check_fields(self, fields: dict):
+        """Retorna (score 0-1, issues)."""
+        return validate_fields(fields or {})
+
+    def _self_check_suspicious(self, foods: list[ProcessedFood],
+                               gui_callback=None):
+        """Fase 3f: reconsulta itens de IA duvidosos e compara respostas.
+
+        Convergencia (<25% de desvio nos macros) sobe a confianca;
+        divergencia forte (>45%) manda para revisao.
+        """
+        sample = foods[:40]
+        names = [pf.platform_name for pf in sample]
+        if gui_callback:
+            gui_callback(f"  Autoconsistencia: revalidando {len(sample)} itens...")
+
+        results = self.ai_finder.find_batch(
+            names, batch_size=8, gui_callback=gui_callback
+        )
+
+        boosted = demoted = 0
+        for pf in sample:
+            res2 = results.get(pf.platform_name.lower().strip())
+            if not (res2 and res2.success and res2.fields):
+                continue
+
+            dev = self._macro_deviation(pf.fields_to_fill, res2.fields)
+            if dev is None:
+                continue
+
+            if dev <= 0.25:
+                pf.match.confidence = min(88.0, pf.match.confidence + 15.0)
+                boosted += 1
+                logger.info(f"  Autocheck OK ({dev*100:.0f}%): "
+                            f"{pf.platform_name} -> conf "
+                            f"{pf.match.confidence:.0f}%")
+            elif dev >= 0.45:
+                pf.match.confidence = max(10.0, pf.match.confidence - 15.0)
+                pf.status = "review_needed"
+                pf.suggestion = (f"IA divergiu {dev*100:.0f}% na "
+                                 f"revalidacao - revisar valores")
+                demoted += 1
+                logger.warning(f"  Autocheck DIVERGENTE ({dev*100:.0f}%): "
+                               f"{pf.platform_name}")
+            else:
+                pf.match.confidence = max(10.0, pf.match.confidence - 5.0)
+
+        logger.info(f"Autoconsistencia: +{boosted} confirmados, "
+                    f"{demoted} para revisao")
+        if gui_callback:
+            gui_callback(f"  Autoconsistencia: {boosted} confirmados, "
+                         f"{demoted} divergentes")
+
+    @staticmethod
+    def _macro_deviation(fields_a: dict, fields_b: dict) -> Optional[float]:
+        """Desvio relativo medio dos macros principais entre duas respostas."""
+        keys = ("valorEnergetico429", "carboidratos429",
+                "proteinas429", "gordurasTotais429")
+        devs = []
+        for k in keys:
+            a, b = to_float((fields_a or {}).get(k)), to_float((fields_b or {}).get(k))
+            if a is None or b is None:
+                continue
+            base = max(abs(a), abs(b), 1.0)
+            devs.append(abs(a - b) / base)
+        return sum(devs) / len(devs) if devs else None
+
     def _ai_fallback(self, no_match_foods: list[ProcessedFood],
                      gui_callback=None, on_item=None):
         """Busca valores nutricionais via IA em lotes (rapido)."""
@@ -488,33 +634,59 @@ class Orchestrator:
         if gui_callback:
             gui_callback(
                 f"  IA: consultando {len(names)} alimentos "
-                f"em lotes de 15..."
+                f"em lotes de 12 (tabela ou receita calculada)..."
             )
 
         results = self.ai_finder.find_batch(
-            names, batch_size=15, gui_callback=gui_callback
+            names, batch_size=12, gui_callback=gui_callback
         )
 
         ai_count = 0
         for pf in no_match_foods:
             res = results.get(pf.platform_name.lower().strip())
             if res and res.success and res.fields:
+                # Confianca: base por metodo x sanidade x completude
+                score, issues = self._sanity_check_fields(res.fields)
+                completeness = max(0.0, min(1.0, res.confidence / 100.0))
+                is_recipe = res.method_note == "receita"
+                base = self._AI_BASE["receita" if is_recipe else "tabela"]
+                conf = (base - 20.0 * (1.0 - score)) \
+                    * (0.7 + 0.3 * completeness)
+
+                method = f"ai_{res.provider}" + ("_rec" if is_recipe else "")
+                tag = "[IA:%s%s]" % (res.provider,
+                                     ":receita" if is_recipe else "")
                 pf.match = MatchResult(
                     platform_name=pf.platform_name,
-                    tbca_name=f"[IA:{res.provider}] {pf.platform_name}",
+                    tbca_name=f"{tag} {pf.platform_name}",
                     tbca_code=f"AI-{res.provider}",
-                    confidence=res.confidence,
-                    match_method=f"ai_{res.provider}",
+                    confidence=round(min(conf, 90.0), 1),
+                    match_method=method,
                     tbca_nutrients={},
                 )
                 pf.fields_to_fill = res.fields
-                pf.status = "matched"
-                ai_count += 1
-                logger.info(
-                    f"  IA ({res.provider}): {pf.platform_name} -> "
-                    f"{len(res.fields)} campos "
-                    f"({res.confidence:.0f}%, {res.duration_ms}ms)"
-                )
+
+                if score < 0.5:
+                    pf.status = "review_needed"
+                    pf.suggestion = "Sanidade: " + "; ".join(
+                        i.split(": ", 1)[-1] for i in issues[:2]
+                    )
+                    logger.warning(
+                        f"  IA ({res.provider}): {pf.platform_name} -> "
+                        f"REVISAR (sanidade {score:.2f}: "
+                        f"{issues[0] if issues else '?'})"
+                    )
+                else:
+                    pf.status = "matched"
+                    ai_count += 1
+                    logger.info(
+                        f"  IA ({res.provider}"
+                        f"{':receita' if is_recipe else ''}): "
+                        f"{pf.platform_name} -> "
+                        f"{len(res.fields)} campos "
+                        f"(conf {pf.match.confidence:.0f}%, "
+                        f"sanidade {score:.2f})"
+                    )
             elif res:
                 logger.debug(f"  IA: {pf.platform_name} sem dados ({res.error})")
 

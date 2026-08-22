@@ -277,11 +277,14 @@ class DashboardPage(ctk.CTkFrame):
                 text_color=COLORS["text_soft"]
             )
 
-    def update_sources(self, tbca: int = 0, usda: int = 0, ia: int = 0):
+    def update_sources(self, tbca: int = 0, usda: int = 0, ia: int = 0,
+                       off: int = 0):
         """Atualiza contadores de fontes de correspondencia."""
         parts = []
         if tbca > 0:
             parts.append(f"TBCA: {tbca}")
+        if off > 0:
+            parts.append(f"Rotulo: {off}")
         if usda > 0:
             parts.append(f"USDA: {usda}")
         if ia > 0:
