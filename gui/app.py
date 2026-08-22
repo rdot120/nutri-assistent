@@ -477,6 +477,10 @@ class App(ctk.CTk):
 
         return (match_name, source, confidence, status, fields_count)
 
+    def _count_matched(self, processed):
+        """Com Match: correspondencias de qualquer fonte (TBCA, USDA, IA)."""
+        return sum(1 for p in processed if p.match)
+
     def _count_filled(self, processed):
         """Preenchidos: tinham dados na plataforma e ainda nao foram salvos."""
         return sum(
@@ -518,8 +522,7 @@ class App(ctk.CTk):
             dashboard.add_food_row(
                 idx, pf.platform_name[:30], *fields
             )
-            matched = sum(1 for p in self._live_rows
-                          if p.status == "matched")
+            matched = self._count_matched(self._live_rows)
             skipped = sum(1 for p in self._live_rows
                           if p.status == "skipped")
             dashboard.update_stats(
@@ -552,20 +555,29 @@ class App(ctk.CTk):
 
         # Estatisticas
         total = len(processed)
-        matched = sum(1 for p in processed if p.status == "matched")
+        matched = self._count_matched(processed)
         skipped = sum(1 for p in processed if p.status == "skipped")
         removed = sum(1 for p in processed if p.status == "removed")
         dashboard.update_stats(total, matched,
                                self._count_filled(processed),
                                self._count_saved(processed))
         dashboard.update_progress(0, matched)
-        dashboard.update_sources(tbca=len(platform_foods))
+
+        tbca_matches = sum(
+            1 for p in processed if p.match
+            and (p.match.match_method or "") not in ("usda", "")
+            and not (p.match.match_method or "").startswith("ai_")
+        )
+        usda_matches = sum(1 for p in processed
+                           if p.match
+                           and p.match.match_method == "usda")
+        ia_matches = sum(1 for p in processed
+                         if p.match and (p.match.match_method or "")
+                         .startswith("ai_"))
+        dashboard.update_sources(tbca=tbca_matches, usda=usda_matches,
+                                 ia=ia_matches)
 
         manual_entries = self.db.get_all_manual_entries()
-        manual_count = sum(1 for p in processed
-                          if p.platform_name in manual_entries)
-        if manual_count > 0:
-            dashboard.update_sources(tbca=len(platform_foods), usda=manual_count)
 
         # Preencher tabela
         for i, pf in enumerate(processed):
@@ -1131,7 +1143,7 @@ class App(ctk.CTk):
         """Atualiza progresso e estatisticas."""
         dashboard = self._pages["dashboard"]
         dashboard.update_progress(current, total)
-        matched = sum(1 for p in self._processed if p.status == "matched")
+        matched = self._count_matched(self._processed)
         saved = self._count_saved(self._processed)
         dashboard.update_stats(
             len(self._processed), matched, filled, saved
