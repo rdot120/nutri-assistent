@@ -540,9 +540,11 @@ class GroqProvider(AIProvider):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            # Lote de 15 alimentos com ~30 campos precisa de bastante
-            # espaco de saida; 2048 truncava o JSON no meio
-            max_tokens=16384,
+            # Lote de 15 alimentos x ~30 campos precisa ~4k tokens reais.
+            # ATENCAO: a cota diaria da Groq (TPD) conta o max_tokens
+            # reservado por request - nao aumentar sem recalcular.
+            # 5000 -> reserva ~5.800/request -> ~34 lotes/dia.
+            max_tokens=5000,
         )
         return response.choices[0].message.content or ""
 
